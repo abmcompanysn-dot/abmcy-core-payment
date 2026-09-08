@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: abmcy-core
+  namespace: abmcy-core
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: abmcy-core
+  template:
+    metadata:
+      labels:
+        app: abmcy-core
+    spec:
+      # Même précaution que le backend DIARRA (voir k8s/backend.yaml) : laisser
+      # l'ingress-nginx retirer ce pod de son pool avant le SIGTERM, pour ne
+      # pas couper une requête déjà routée pendant un rollout/scale-down.
+      terminationGracePeriodSeconds: 40
+      containers:
+        - name: abmcy-core
+          # Construite localement puis importée dans containerd via
+          # `k3s ctr images import` (voir k8s/deploy.sh) — pas de registre.
+          image: abmcy-core:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 9090
+          env:
+            - name: PORT
+              value: "9090"
+            # DIARRA et ABMCY Core partagent le même serveur Postgres (service
+            # k3s du namespace diarra), bases logiquement séparées.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: abmcy-core-secrets
+                  key: DATABASE_URL
+            - name: DIARRA_GATEWAY_URL
+              valueFrom:
+                secretKeyRef:
+                  name: abmcy-core-secrets
+                  key: DIARRA_GATEWAY_URL
+            - name: DIARRA_GATEWAY_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: abmcy-core-secrets
+                  key: DIARRA_GATEWAY_API_KEY
+            - name: DIARRA_GATEWAY_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: abmcy-core-secrets
+                  key: DIARRA_GATEWAY_HMAC_SECRET
+            - name: ABMCY_CORE_CALLBACK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: abmcy-core-secrets
+                  key: ABMCY_CORE_CALLBACK_URL
+            - name: ABMCY_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: abmcy-core-secrets
+                  key: ABMCY_ADMIN_TOKEN
+          lifecycle:
+            preStop:
+              exec:
+                command: ["sleep", "5"]
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9090
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9090
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: abmcy-core
+  namespace: abmcy-core
+spec:
+  selector:
+    app: abmcy-core
+  ports:
+    - port: 8080
+      targetPort: 9090

@@ -1,0 +1,17 @@
+# À AJOUTER dans /etc/caddy/Caddyfile sur le VPS (puis `systemctl reload caddy`).
+#
+# core.diarra.app est un sous-domaine de diarra.app géré par Cloudflare
+# (proxied, SSL mode Full) — donc même montage que api.diarra.app : Cloudflare
+# termine le TLS public et parle au VPS en HTTPS sur le certificat self-signed
+# ci-dessous, que le mode Full accepte. ingress-nginx (NodePort 30080) route
+# ensuite par Host header vers le service abmcy-core du namespace abmcy-core.
+
+https://core.diarra.app {
+	tls /etc/caddy/certs/selfsigned.crt /etc/caddy/certs/selfsigned.key
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:30080 {
+		header_up Host core.diarra.app
+		health_uri /health
+		health_interval 10s
+	}
+}

@@ -1,0 +1,6 @@
+.git
+server.log
+server.err.log
+server.pid
+*.md
+k8s

@@ -1,0 +1,25 @@
+# core.diarra.app — sous-domaine de diarra.app (géré par Cloudflare, proxied,
+# SSL mode Full). Caddy (devant, cert self-signed accepté par Cloudflare en
+# Full) route ce host vers ce NodePort ; ingress-nginx route ensuite par le
+# Host header. Même montage que api.diarra.app (voir DIARRA k8s/ingress.yaml
+# et /etc/caddy/Caddyfile sur le VPS).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: abmcy-core
+  namespace: abmcy-core
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "2m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: core.diarra.app
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: abmcy-core
+                port:
+                  number: 8080
