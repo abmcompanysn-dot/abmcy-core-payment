@@ -134,8 +134,11 @@ func (h *AdminHandler) RelayPayment(w http.ResponseWriter, r *http.Request) {
 	// Recharge pour renvoyer relay_status / relay_last_error à jour.
 	fresh, _ := h.appRepo.FindPaymentByID(r.Context(), p.ID)
 	w.Header().Set("Content-Type", "application/json")
+	// Toujours 200 : un échec de relais est un résultat métier normal (l'app
+	// est peut-être hors ligne), pas une erreur de CETTE requête. Renvoyer un
+	// 5xx ici ferait aussi intercepter la réponse par Cloudflare (page 502
+	// générique au lieu de notre JSON). Le dashboard lit `ok`.
 	if relayErr != nil {
-		w.WriteHeader(http.StatusBadGateway)
 		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": relayErr.Error(), "payment": fresh})
 		return
 	}
