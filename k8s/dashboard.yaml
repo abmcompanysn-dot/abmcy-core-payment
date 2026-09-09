@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: abmcy-core-console
+  namespace: abmcy-core
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: abmcy-core-console
+  template:
+    metadata:
+      labels:
+        app: abmcy-core-console
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: console
+          image: abmcy-core-console:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 3100
+          env:
+            - name: PORT
+              value: "3100"
+            # Appel direct au service ABMCY Core dans le cluster — pas de
+            # détour par Cloudflare/Caddy pour un trafic interne.
+            - name: ABMCY_CORE_URL
+              value: "http://abmcy-core.abmcy-core.svc.cluster.local:8080"
+          readinessProbe:
+            httpGet:
+              path: /console/login
+              port: 3100
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            httpGet:
+              path: /console/login
+              port: 3100
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            timeoutSeconds: 3
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "256Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: abmcy-core-console
+  namespace: abmcy-core
+spec:
+  selector:
+    app: abmcy-core-console
+  ports:
+    - port: 8080
+      targetPort: 3100

@@ -1,7 +1,8 @@
 #!/bin/sh
-# Déploie ABMCY Core Payment sur le VPS diarra-vps (k3s, namespace
-# abmcy-core). Même principe que DIARRA k8s/deploy.sh : build local, import
-# dans containerd (pas de registre), rollout forcé (tag :latest immuable).
+# Déploie ABMCY Core Payment + sa console sur le VPS diarra-vps (k3s,
+# namespace abmcy-core). Même principe que DIARRA k8s/deploy.sh : build
+# local, import dans containerd (pas de registre), rollout forcé (tag
+# :latest immuable).
 #
 # Prérequis (une seule fois) :
 #   - base abmcy_core créée sur le Postgres du namespace diarra
@@ -13,22 +14,27 @@
 set -eu
 export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
 
-echo "== Build image =="
+echo "== Build image API =="
 timeout 480 docker build -t abmcy-core:latest .
-
-echo "== Import dans containerd (k3s) =="
 docker save abmcy-core:latest | k3s ctr images import -
+
+echo "== Build image console =="
+timeout 480 docker build -t abmcy-core-console:latest ./dashboard
+docker save abmcy-core-console:latest | k3s ctr images import -
 
 echo "== Application des manifests =="
 kubectl apply -f k8s/namespace.yaml
 kubectl apply -f k8s/deployment.yaml
+kubectl apply -f k8s/dashboard.yaml
 kubectl apply -f k8s/ingress.yaml
 
 echo "== Redémarrage forcé (nouvelle image, même tag) =="
 kubectl -n abmcy-core rollout restart deployment/abmcy-core
+kubectl -n abmcy-core rollout restart deployment/abmcy-core-console
 
 echo "== Attente =="
 kubectl -n abmcy-core rollout status deployment/abmcy-core --timeout=120s
+kubectl -n abmcy-core rollout status deployment/abmcy-core-console --timeout=120s
 
 echo "== Terminé =="
 kubectl -n abmcy-core get pods

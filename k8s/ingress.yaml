@@ -3,6 +3,10 @@
 # Full) route ce host vers ce NodePort ; ingress-nginx route ensuite par le
 # Host header. Même montage que api.diarra.app (voir DIARRA k8s/ingress.yaml
 # et /etc/caddy/Caddyfile sur le VPS).
+#
+# /console  -> la console d'admin (Next.js, basePath=/console)
+# /         -> l'API ABMCY Core (tout le reste : /v1, /webhooks, /admin, /health)
+# L'ordre compte : le préfixe le plus spécifique (/console) doit précéder /.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -16,6 +20,13 @@ spec:
     - host: core.diarra.app
       http:
         paths:
+          - path: /console
+            pathType: Prefix
+            backend:
+              service:
+                name: abmcy-core-console
+                port:
+                  number: 8080
           - path: /
             pathType: Prefix
             backend:

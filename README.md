@@ -90,17 +90,31 @@ Auth : `Authorization: Bearer $ABMCY_ADMIN_TOKEN`.
 - `POST /admin/apps` — `{"name", "default_callback_url?"}` → crée une app,
   renvoie `api_key` + `hmac_secret` **une seule fois**.
 - `PUT /admin/apps/{id}/active` — `{"active": true|false}`.
+- `GET /admin/payments?app_id=&status=&limit=&offset=` — listing paginé, le
+  plus récent d'abord, avec le nom de l'app.
+- `GET /admin/payments/{id}` — détail (dont `relay_status`, `relay_attempts`,
+  `relay_last_error`).
+- `POST /admin/payments/{id}/relay` — redéclenche le relais vers l'app.
+  Réponse toujours `200` : `{"ok": bool, "error"?, "payment"}`.
+
+## Console d'administration
+
+`dashboard/` — app Next.js séparée, servie sur **`core.diarra.app/console`**
+(`basePath=/console`). Login par le jeton admin (cookie httpOnly), liste des
+apps et des paiements, renvoi manuel du relais. Voir `dashboard/README.md`.
 
 ## Statut
 
-Validé de bout en bout le **2026-09-08** contre la production :
+Validé de bout en bout contre la **production** :
 
 - app créée via `/admin/apps` → requête `/v1/pay` signée → `payments` créé →
   dépôt réel via la passerelle DIARRA prod → `redirect_url` PawaPay renvoyée ;
 - idempotence, rejet signature/clé invalides (401) ;
 - callback `POST /webhooks/diarra` signé → `payments` passe `completed` →
-  relais déclenché vers le `callback_url` de l'app.
+  relais **signé** vers le `callback_url` de l'app, `relay_status` tracé ;
+- console : login, liste, détail, renvoi manuel du relais (`delivered`).
 
-Base `abmcy_core` provisionnée sur le Postgres de diarra-vps, migration `001`
-appliquée. Reste : déploiement k3s + `core.diarra.app`, clé DIARRA de
-production (le test utilise une clé provisoire à révoquer).
+Déployé sur diarra-vps (k3s namespace `abmcy-core`, base `abmcy_core`,
+`core.diarra.app` via Cloudflare + Caddy). **Reste** : clé DIARRA de
+production via l'admin DIARRA `/admin/gateway` (le déploiement tourne encore
+sur une clé de test à révoquer).
