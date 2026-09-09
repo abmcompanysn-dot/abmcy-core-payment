@@ -76,6 +76,26 @@ export default function AppsPage() {
     }
   }
 
+  async function toggleKyc(a: App) {
+    setBusyId(a.id);
+    setErr('');
+    try {
+      const next = a.kyc_level === 'verified' ? 'none' : 'verified';
+      const res = await fetch(api(`/api/apps/${a.id}/kyc`), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ level: next }),
+      });
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}));
+        setErr(b.error || `HTTP ${res.status}`);
+      }
+      load();
+    } finally {
+      setBusyId('');
+    }
+  }
+
   return (
     <Shell>
       {err && <div className="err-box">{err}</div>}
@@ -117,6 +137,9 @@ export default function AppsPage() {
 
       <div className="panel">
         <h2>Applications {loading ? '…' : `(${apps.length})`}</h2>
+        <p className="muted" style={{ fontSize: 12, marginTop: -6 }}>
+          Sans vérification : plafond 200 000 FCFA par transaction. Vérifiée : 1 000 000 FCFA.
+        </p>
         <table>
           <thead>
             <tr>
@@ -125,6 +148,7 @@ export default function AppsPage() {
               <th>Callback par défaut</th>
               <th>Créée</th>
               <th>État</th>
+              <th>KYC</th>
               <th></th>
             </tr>
           </thead>
@@ -141,6 +165,19 @@ export default function AppsPage() {
                   </span>
                 </td>
                 <td>
+                  <span className={`badge ${a.kyc_level === 'verified' ? 'b-ok' : 'b-muted'}`}>
+                    {a.kyc_level === 'verified' ? 'vérifiée' : 'non vérifiée'}
+                  </span>
+                </td>
+                <td style={{ whiteSpace: 'nowrap' }}>
+                  <button
+                    className="ghost"
+                    disabled={busyId === a.id}
+                    onClick={() => toggleKyc(a)}
+                    style={{ marginRight: 6 }}
+                  >
+                    {a.kyc_level === 'verified' ? 'Retirer KYC' : 'Valider KYC'}
+                  </button>
                   <button
                     className={a.is_active ? 'danger' : 'ghost'}
                     disabled={busyId === a.id}
@@ -153,7 +190,7 @@ export default function AppsPage() {
             ))}
             {!loading && apps.length === 0 && (
               <tr>
-                <td colSpan={6} className="muted">
+                <td colSpan={7} className="muted">
                   Aucune application.
                 </td>
               </tr>

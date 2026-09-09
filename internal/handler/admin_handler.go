@@ -145,6 +145,30 @@ func (h *AdminHandler) RelayPayment(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "payment": fresh})
 }
 
+// SetAppKYC — PUT /admin/apps/{id}/kyc. Corps : {"level": "none"|"verified"}.
+// Validé à la main après réception des justificatifs. "verified" fait passer
+// le plafond par transaction de 200 000 à 1 000 000 FCFA (voir model.MaxAmountFor).
+func (h *AdminHandler) SetAppKYC(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var input struct {
+		Level string `json:"level"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, `{"error":"invalid_request"}`, http.StatusBadRequest)
+		return
+	}
+	if input.Level != model.KYCNone && input.Level != model.KYCVerified {
+		http.Error(w, `{"error":"level_must_be_none_or_verified"}`, http.StatusBadRequest)
+		return
+	}
+	if err := h.appRepo.SetKYCLevel(r.Context(), id, input.Level); err != nil {
+		http.Error(w, `{"error":"update_failed"}`, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]bool{"ok": true})
+}
+
 // SetAppActive — PUT /admin/apps/{id}/active. Corps : {"active": true|false}.
 func (h *AdminHandler) SetAppActive(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")

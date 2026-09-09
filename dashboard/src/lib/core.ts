@@ -13,6 +13,7 @@ export type App = {
   name: string;
   default_callback_url?: string | null;
   is_active: boolean;
+  kyc_level: 'none' | 'verified';
   created_at: string;
 };
 
@@ -25,10 +26,14 @@ export type Payment = {
   status: string;
   failure_reason?: string | null;
   amount_cfa: number;
+  fee_cfa: number;
+  net_cfa?: number | null;
+  usd_rate_used?: number | null;
   currency: string;
   description?: string | null;
   redirect_url?: string | null;
   callback_url?: string | null;
+  return_url?: string | null;
   relay_status: string;
   relay_attempts: number;
   relay_last_error?: string | null;

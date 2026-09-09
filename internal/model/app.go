@@ -12,8 +12,27 @@ type App struct {
 	HMACSecretHash     string    `json:"-"`
 	DefaultCallbackURL *string   `json:"default_callback_url,omitempty"`
 	IsActive           bool      `json:"is_active"`
+	KYCLevel           string    `json:"kyc_level"` // "none" | "verified"
 	CreatedAt          time.Time `json:"created_at"`
 	UpdatedAt          time.Time `json:"updated_at"`
+}
+
+const (
+	KYCNone     = "none"
+	KYCVerified = "verified"
+
+	// Plafonds par transaction, en FCFA, selon le niveau KYC. Au-delà,
+	// /v1/pay refuse (limit_exceeded).
+	MaxAmountNoKYC    = 200_000
+	MaxAmountVerified = 1_000_000
+)
+
+// MaxAmountFor renvoie le plafond par transaction pour un niveau KYC donné.
+func MaxAmountFor(kycLevel string) int {
+	if kycLevel == KYCVerified {
+		return MaxAmountVerified
+	}
+	return MaxAmountNoKYC
 }
 
 const (
@@ -49,10 +68,15 @@ type Payment struct {
 	Status          string  `json:"status"`
 	FailureReason   *string `json:"failure_reason,omitempty"`
 	AmountCFA       int     `json:"amount_cfa"`
-	Currency        string  `json:"currency"`
-	Description     *string `json:"description,omitempty"`
-	RedirectURL     *string `json:"redirect_url,omitempty"`
-	CallbackURL     *string `json:"callback_url,omitempty"`
+	// FeeCFA : commission ABMCY Core figée à la création. NetCFA = AmountCFA
+	// - FeeCFA (reversé au marchand). Voir migration 004 / fees.Compute.
+	FeeCFA      int     `json:"fee_cfa"`
+	NetCFA      *int    `json:"net_cfa,omitempty"`
+	USDRateUsed *int    `json:"usd_rate_used,omitempty"`
+	Currency    string  `json:"currency"`
+	Description *string `json:"description,omitempty"`
+	RedirectURL *string `json:"redirect_url,omitempty"`
+	CallbackURL *string `json:"callback_url,omitempty"`
 	// ReturnURL : où renvoyer le NAVIGATEUR de l'utilisateur final une fois
 	// le paiement terminé (page hébergée / widget). Distincte de CallbackURL
 	// (notification serveur-à-serveur). Voir migration 003.

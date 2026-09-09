@@ -88,9 +88,10 @@ export default function PaymentsPage() {
               <th>Application</th>
               <th>Réf. app</th>
               <th>Montant</th>
+              <th>Frais</th>
+              <th>Net marchand</th>
               <th>Statut</th>
               <th>Relais</th>
-              <th>Provider</th>
               <th></th>
             </tr>
           </thead>
@@ -101,6 +102,8 @@ export default function PaymentsPage() {
                 <td>{p.app_name || '—'}</td>
                 <td className="mono">{p.app_ref}</td>
                 <td>{fmtCFA(p.amount_cfa)}</td>
+                <td className="muted">{fmtCFA(p.fee_cfa)}</td>
+                <td>{p.net_cfa != null ? fmtCFA(p.net_cfa) : '—'}</td>
                 <td>
                   <StatusBadge value={p.status} />
                   {p.failure_reason && (
@@ -118,7 +121,6 @@ export default function PaymentsPage() {
                     </span>
                   )}
                 </td>
-                <td className="muted">{p.provider || '—'}</td>
                 <td>
                   <Link href={`/payments/${p.id}`}>détail</Link>
                 </td>
@@ -126,7 +128,7 @@ export default function PaymentsPage() {
             ))}
             {!loading && rows.length === 0 && (
               <tr>
-                <td colSpan={8} className="muted">
+                <td colSpan={9} className="muted">
                   Aucun paiement.
                 </td>
               </tr>

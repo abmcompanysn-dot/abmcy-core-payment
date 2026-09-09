@@ -69,10 +69,19 @@ export default function PaymentDetailPage() {
               <dd>{p.app_name || '—'}</dd>
               <dt>Type</dt>
               <dd>{p.type}</dd>
-              <dt>Montant</dt>
+              <dt>Montant payé</dt>
               <dd>
                 {fmtCFA(p.amount_cfa)} {p.currency}
               </dd>
+              <dt>Frais ABMCY Core</dt>
+              <dd>
+                {fmtCFA(p.fee_cfa)}
+                {p.usd_rate_used ? (
+                  <span className="muted"> (50 F / {p.usd_rate_used} F le $)</span>
+                ) : null}
+              </dd>
+              <dt>Net reversé au marchand</dt>
+              <dd>{p.net_cfa != null ? fmtCFA(p.net_cfa) : '—'}</dd>
               <dt>Provider</dt>
               <dd>{p.provider || '—'}</dd>
               <dt>Description</dt>

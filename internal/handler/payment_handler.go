@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/abmcy/core/internal/fees"
 	"github.com/abmcy/core/internal/gateway"
 	"github.com/abmcy/core/internal/middleware"
 	"github.com/abmcy/core/internal/model"
@@ -51,15 +52,21 @@ type PaymentHandler struct {
 	// dérivée de selfCallbackURL. Sert à construire hosted_pay_url renvoyée à
 	// l'app (page de paiement hébergée /pay/{ref}).
 	publicBaseURL string
+	// usdRate : taux FCFA/USD pour le calcul de commission (voir fees.Compute).
+	usdRate int
 }
 
-func NewPaymentHandler(appRepo *repository.AppRepo, diarra *gateway.Client, diarraHMACSecretHash, selfCallbackURL string) *PaymentHandler {
+func NewPaymentHandler(appRepo *repository.AppRepo, diarra *gateway.Client, diarraHMACSecretHash, selfCallbackURL string, usdRate int) *PaymentHandler {
+	if usdRate <= 0 {
+		usdRate = fees.DefaultUSDRate
+	}
 	return &PaymentHandler{
 		appRepo:              appRepo,
 		diarra:               diarra,
 		diarraHMACSecretHash: diarraHMACSecretHash,
 		selfCallbackURL:      selfCallbackURL,
 		publicBaseURL:        strings.TrimSuffix(strings.TrimSuffix(selfCallbackURL, "/webhooks/diarra"), "/"),
+		usdRate:              usdRate,
 	}
 }
 
@@ -107,6 +114,30 @@ func (h *PaymentHandler) Pay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Plafond par transaction selon le niveau KYC de l'app. Sans KYC :
+	// 200 000 FCFA ; vérifiée : 1 000 000. Au-delà, on refuse net.
+	app, err := h.appRepo.FindByID(r.Context(), appID)
+	if err != nil {
+		http.Error(w, `{"error":"app_lookup_failed"}`, http.StatusInternalServerError)
+		return
+	}
+	maxAmt := model.MaxAmountFor(app.KYCLevel)
+	if input.AmountCFA > maxAmt {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error":        "limit_exceeded",
+			"message":      fmt.Sprintf("Montant maximum autorisé : %d FCFA par transaction. Vérification d'identité requise pour aller au-delà.", maxAmt),
+			"max_cfa":      maxAmt,
+			"kyc_level":    app.KYCLevel,
+			"kyc_required": app.KYCLevel == model.KYCNone,
+		})
+		return
+	}
+
+	// Commission ABMCY Core, figée maintenant (le taux peut bouger ensuite).
+	fee := fees.Compute(input.AmountCFA, h.usdRate)
+
 	diarraRef := abmcyUUID()
 	var desc, callbackURL, returnURL *string
 	if input.Description != "" {
@@ -124,6 +155,9 @@ func (h *PaymentHandler) Pay(w http.ResponseWriter, r *http.Request) {
 		AppRef:          input.AppRef,
 		DiarraClientRef: diarraRef,
 		AmountCFA:       input.AmountCFA,
+		FeeCFA:          fee.FeeCFA,
+		NetCFA:          fee.NetCFA,
+		USDRateUsed:     fee.USDRateUsed,
 		Currency:        "XOF",
 		Description:     desc,
 		CallbackURL:     callbackURL,

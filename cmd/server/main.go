@@ -21,8 +21,10 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 
 	"github.com/abmcy/core/internal/db"
+	"github.com/abmcy/core/internal/fees"
 	"github.com/abmcy/core/internal/gateway"
 	"github.com/abmcy/core/internal/handler"
 	"github.com/abmcy/core/internal/middleware"
@@ -75,8 +77,16 @@ func main() {
 		log.Fatal("ABMCY_CORE_CALLBACK_URL est requis (ex. https://core.diarra.app/webhooks/diarra) — DIARRA rappelle cette URL")
 	}
 
+	// Taux FCFA/USD pour la commission (50 F par dollar de transaction).
+	usdRate := fees.DefaultUSDRate
+	if v := os.Getenv("ABMCY_USD_RATE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			usdRate = n
+		}
+	}
+
 	appRepo := repository.NewAppRepo(pool)
-	paymentHandler := handler.NewPaymentHandler(appRepo, diarra, diarraHMACSecretHash, selfCallbackURL)
+	paymentHandler := handler.NewPaymentHandler(appRepo, diarra, diarraHMACSecretHash, selfCallbackURL, usdRate)
 	adminHandler := handler.NewAdminHandler(appRepo, paymentHandler)
 
 	r := chi.NewRouter()
@@ -114,6 +124,7 @@ func main() {
 		r.Get("/apps", adminHandler.ListApps)
 		r.Post("/apps", adminHandler.CreateApp)
 		r.Put("/apps/{id}/active", adminHandler.SetAppActive)
+		r.Put("/apps/{id}/kyc", adminHandler.SetAppKYC)
 		r.Get("/payments", adminHandler.ListPayments)
 		r.Get("/payments/{id}", adminHandler.GetPayment)
 		r.Post("/payments/{id}/relay", adminHandler.RelayPayment)

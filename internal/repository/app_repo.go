@@ -22,7 +22,7 @@ func NewAppRepo(pool *pgxpool.Pool) *AppRepo {
 	return &AppRepo{pool: pool}
 }
 
-const appColumns = `id, name, api_key_hash, hmac_secret_hash, default_callback_url, is_active, created_at, updated_at`
+const appColumns = `id, name, api_key_hash, hmac_secret_hash, default_callback_url, is_active, kyc_level, created_at, updated_at`
 
 func (r *AppRepo) Create(ctx context.Context, name, apiKeyHash, hmacSecretHash string, defaultCallbackURL *string) (*model.App, error) {
 	row := r.pool.QueryRow(ctx,
@@ -54,8 +54,8 @@ func (r *AppRepo) List(ctx context.Context) ([]*model.App, error) {
 	defer rows.Close()
 	out := []*model.App{}
 	for rows.Next() {
-		a := &model.App{}
-		if err := rows.Scan(&a.ID, &a.Name, &a.APIKeyHash, &a.HMACSecretHash, &a.DefaultCallbackURL, &a.IsActive, &a.CreatedAt, &a.UpdatedAt); err != nil {
+		a, err := scanAppRows(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -68,9 +68,16 @@ func (r *AppRepo) SetActive(ctx context.Context, id string, active bool) error {
 	return err
 }
 
+// SetKYCLevel — "none" | "verified" (voir model.KYC*). Validé à la main
+// depuis le back-office admin.
+func (r *AppRepo) SetKYCLevel(ctx context.Context, id, level string) error {
+	_, err := r.pool.Exec(ctx, `UPDATE apps SET kyc_level = $2, updated_at = now() WHERE id = $1`, id, level)
+	return err
+}
+
 func scanApp(row pgx.Row) (*model.App, error) {
 	a := &model.App{}
-	err := row.Scan(&a.ID, &a.Name, &a.APIKeyHash, &a.HMACSecretHash, &a.DefaultCallbackURL, &a.IsActive, &a.CreatedAt, &a.UpdatedAt)
+	err := row.Scan(&a.ID, &a.Name, &a.APIKeyHash, &a.HMACSecretHash, &a.DefaultCallbackURL, &a.IsActive, &a.KYCLevel, &a.CreatedAt, &a.UpdatedAt)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, ErrAppNotFound
@@ -80,25 +87,39 @@ func scanApp(row pgx.Row) (*model.App, error) {
 	return a, nil
 }
 
+func scanAppRows(rows pgx.Rows) (*model.App, error) {
+	a := &model.App{}
+	err := rows.Scan(&a.ID, &a.Name, &a.APIKeyHash, &a.HMACSecretHash, &a.DefaultCallbackURL, &a.IsActive, &a.KYCLevel, &a.CreatedAt, &a.UpdatedAt)
+	return a, err
+}
+
 // --- Payments -------------------------------------------------------------
 
 const paymentColumns = `id, app_id, app_ref, diarra_client_ref, type, provider, status, failure_reason,
-	amount_cfa, currency, description, redirect_url, callback_url, return_url,
+	amount_cfa, fee_cfa, net_cfa, usd_rate_used, currency, description, redirect_url, callback_url, return_url,
 	relay_status, relay_attempts, relay_last_error, relay_last_attempt_at,
 	created_at, updated_at`
 
 // Mêmes colonnes que paymentColumns, préfixées "p." pour les jointures.
 const paymentColumnsP = `p.id, p.app_id, p.app_ref, p.diarra_client_ref, p.type, p.provider, p.status, p.failure_reason,
-	p.amount_cfa, p.currency, p.description, p.redirect_url, p.callback_url, p.return_url,
+	p.amount_cfa, p.fee_cfa, p.net_cfa, p.usd_rate_used, p.currency, p.description, p.redirect_url, p.callback_url, p.return_url,
 	p.relay_status, p.relay_attempts, p.relay_last_error, p.relay_last_attempt_at,
 	p.created_at, p.updated_at`
 
+// paymentScanTargets — cibles de Scan dans l'ordre de paymentColumns /
+// paymentColumnsP. Un seul endroit à maintenir quand le schéma bouge.
+func paymentScanTargets(p *model.Payment) []any {
+	return []any{
+		&p.ID, &p.AppID, &p.AppRef, &p.DiarraClientRef, &p.Type, &p.Provider, &p.Status, &p.FailureReason,
+		&p.AmountCFA, &p.FeeCFA, &p.NetCFA, &p.USDRateUsed, &p.Currency, &p.Description, &p.RedirectURL, &p.CallbackURL, &p.ReturnURL,
+		&p.RelayStatus, &p.RelayAttempts, &p.RelayLastError, &p.RelayLastAttemptAt,
+		&p.CreatedAt, &p.UpdatedAt,
+	}
+}
+
 func scanPaymentRow(row pgx.Row) (*model.Payment, error) {
 	p := &model.Payment{}
-	err := row.Scan(&p.ID, &p.AppID, &p.AppRef, &p.DiarraClientRef, &p.Type, &p.Provider, &p.Status, &p.FailureReason,
-		&p.AmountCFA, &p.Currency, &p.Description, &p.RedirectURL, &p.CallbackURL, &p.ReturnURL,
-		&p.RelayStatus, &p.RelayAttempts, &p.RelayLastError, &p.RelayLastAttemptAt,
-		&p.CreatedAt, &p.UpdatedAt)
+	err := row.Scan(paymentScanTargets(p)...)
 	return p, err
 }
 
@@ -118,6 +139,9 @@ type CreatePaymentParams struct {
 	AppRef          string
 	DiarraClientRef string
 	AmountCFA       int
+	FeeCFA          int
+	NetCFA          int
+	USDRateUsed     int
 	Currency        string
 	Description     *string
 	CallbackURL     *string
@@ -126,10 +150,12 @@ type CreatePaymentParams struct {
 
 func (r *AppRepo) CreatePayment(ctx context.Context, p CreatePaymentParams) (*model.Payment, error) {
 	row := r.pool.QueryRow(ctx,
-		`INSERT INTO payments (app_id, app_ref, diarra_client_ref, amount_cfa, currency, description, callback_url, return_url)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		`INSERT INTO payments (app_id, app_ref, diarra_client_ref, amount_cfa, fee_cfa, net_cfa, usd_rate_used,
+		                       currency, description, callback_url, return_url)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 		 RETURNING `+paymentColumns,
-		p.AppID, p.AppRef, p.DiarraClientRef, p.AmountCFA, p.Currency, p.Description, p.CallbackURL, p.ReturnURL)
+		p.AppID, p.AppRef, p.DiarraClientRef, p.AmountCFA, p.FeeCFA, p.NetCFA, p.USDRateUsed,
+		p.Currency, p.Description, p.CallbackURL, p.ReturnURL)
 	return scanPayment(row)
 }
 
@@ -141,11 +167,7 @@ func (r *AppRepo) FindPaymentByDiarraRefPublic(ctx context.Context, diarraClient
 		 FROM payments p JOIN apps a ON a.id = p.app_id
 		 WHERE p.diarra_client_ref = $1`, diarraClientRef)
 	pw := &model.PaymentWithApp{Payment: &model.Payment{}}
-	p := pw.Payment
-	err := row.Scan(&p.ID, &p.AppID, &p.AppRef, &p.DiarraClientRef, &p.Type, &p.Provider, &p.Status, &p.FailureReason,
-		&p.AmountCFA, &p.Currency, &p.Description, &p.RedirectURL, &p.CallbackURL, &p.ReturnURL,
-		&p.RelayStatus, &p.RelayAttempts, &p.RelayLastError, &p.RelayLastAttemptAt,
-		&p.CreatedAt, &p.UpdatedAt, &pw.AppName)
+	err := row.Scan(append(paymentScanTargets(pw.Payment), &pw.AppName)...)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, ErrPaymentNotFound
@@ -216,11 +238,7 @@ func (r *AppRepo) ListPayments(ctx context.Context, f ListPaymentsFilter) ([]*mo
 	out := []*model.PaymentWithApp{}
 	for rows.Next() {
 		pw := &model.PaymentWithApp{Payment: &model.Payment{}}
-		p := pw.Payment
-		if err := rows.Scan(&p.ID, &p.AppID, &p.AppRef, &p.DiarraClientRef, &p.Type, &p.Provider, &p.Status, &p.FailureReason,
-			&p.AmountCFA, &p.Currency, &p.Description, &p.RedirectURL, &p.CallbackURL,
-			&p.RelayStatus, &p.RelayAttempts, &p.RelayLastError, &p.RelayLastAttemptAt,
-			&p.CreatedAt, &p.UpdatedAt, &pw.AppName); err != nil {
+		if err := rows.Scan(append(paymentScanTargets(pw.Payment), &pw.AppName)...); err != nil {
 			return nil, err
 		}
 		out = append(out, pw)
