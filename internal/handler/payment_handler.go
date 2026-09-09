@@ -18,9 +18,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html/template"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/abmcy/core/internal/gateway"
@@ -44,6 +47,10 @@ type PaymentHandler struct {
 	// (relayGatewayCallback abandonne sinon, pas de fallback sur
 	// default_callback_url), donc on le passe sur CHAQUE CreateDeposit.
 	selfCallbackURL string
+	// publicBaseURL : racine publique de CE service (ex. https://core.diarra.app),
+	// dérivée de selfCallbackURL. Sert à construire hosted_pay_url renvoyée à
+	// l'app (page de paiement hébergée /pay/{ref}).
+	publicBaseURL string
 }
 
 func NewPaymentHandler(appRepo *repository.AppRepo, diarra *gateway.Client, diarraHMACSecretHash, selfCallbackURL string) *PaymentHandler {
@@ -52,6 +59,7 @@ func NewPaymentHandler(appRepo *repository.AppRepo, diarra *gateway.Client, diar
 		diarra:               diarra,
 		diarraHMACSecretHash: diarraHMACSecretHash,
 		selfCallbackURL:      selfCallbackURL,
+		publicBaseURL:        strings.TrimSuffix(strings.TrimSuffix(selfCallbackURL, "/webhooks/diarra"), "/"),
 	}
 }
 
@@ -95,17 +103,20 @@ func (h *PaymentHandler) Pay(w http.ResponseWriter, r *http.Request) {
 	// existant plutôt que d'en créer un second (même principe que
 	// GatewayHandler.CreateDeposit côté DIARRA).
 	if existing, err := h.appRepo.FindPaymentByAppRef(r.Context(), appID, input.AppRef); err == nil {
-		writePayment(w, existing, http.StatusOK)
+		writePaymentWithHosted(w, existing, h.hostedPayURL(existing.DiarraClientRef), http.StatusOK)
 		return
 	}
 
 	diarraRef := abmcyUUID()
-	var desc, callbackURL *string
+	var desc, callbackURL, returnURL *string
 	if input.Description != "" {
 		desc = &input.Description
 	}
 	if input.CallbackURL != "" {
 		callbackURL = &input.CallbackURL
+	}
+	if input.ReturnURL != "" {
+		returnURL = &input.ReturnURL
 	}
 
 	payment, err := h.appRepo.CreatePayment(r.Context(), repository.CreatePaymentParams{
@@ -116,6 +127,7 @@ func (h *PaymentHandler) Pay(w http.ResponseWriter, r *http.Request) {
 		Currency:        "XOF",
 		Description:     desc,
 		CallbackURL:     callbackURL,
+		ReturnURL:       returnURL,
 	})
 	if err != nil {
 		http.Error(w, `{"error":"payment_creation_failed"}`, http.StatusInternalServerError)
@@ -145,7 +157,17 @@ func (h *PaymentHandler) Pay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	payment.RedirectURL = &tx.RedirectURL
-	writePayment(w, payment, http.StatusCreated)
+	writePaymentWithHosted(w, payment, h.hostedPayURL(payment.DiarraClientRef), http.StatusCreated)
+}
+
+// hostedPayURL construit l'URL de la page de paiement hébergée d'ABMCY Core
+// pour ce paiement (l'app ouvre ce lien pour l'utilisateur au lieu de gérer
+// la redirection PawaPay elle-même).
+func (h *PaymentHandler) hostedPayURL(diarraRef string) string {
+	if h.publicBaseURL == "" {
+		return ""
+	}
+	return h.publicBaseURL + "/pay/" + diarraRef
 }
 
 // PaymentStatus — GET /v1/payments/{app_ref} (authentifié par app) : lit
@@ -166,6 +188,16 @@ func writePayment(w http.ResponseWriter, p *model.Payment, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]interface{}{"payment": p})
+}
+
+func writePaymentWithHosted(w http.ResponseWriter, p *model.Payment, hostedPayURL string, status int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	out := map[string]interface{}{"payment": p}
+	if hostedPayURL != "" {
+		out["hosted_pay_url"] = hostedPayURL
+	}
+	json.NewEncoder(w).Encode(out)
 }
 
 // gatewayCallbackPayload — même forme que côté DIARRA (gateway_relay.go),
@@ -300,4 +332,168 @@ func verifySignature(hmacSecretHash string, body []byte, sigHex string) bool {
 	mac.Write(body)
 	expected := hex.EncodeToString(mac.Sum(nil))
 	return hmac.Equal([]byte(expected), []byte(sigHex))
+}
+
+// --- Page de paiement hébergée -----------------------------------------
+
+var hostedPayTmpl = template.Must(template.New("pay").Parse(`<!doctype html>
+<html lang="fr"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Paiement — {{.AppName}}</title>
+<style>
+:root{color-scheme:light}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f4f5f7;color:#1a1a1a;display:flex;min-height:100vh;align-items:center;justify-content:center;padding:20px}
+.card{background:#fff;border:1px solid #e3e5e8;border-radius:14px;max-width:420px;width:100%;padding:28px;box-shadow:0 2px 12px rgba(0,0,0,.06)}
+h1{font-size:16px;margin:0 0 2px}
+.merchant{color:#6b7280;font-size:13px;margin-bottom:20px}
+.amount{font-size:32px;font-weight:700;letter-spacing:-.02em}
+.desc{color:#4b5563;margin:6px 0 22px}
+.st{display:inline-block;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:700;text-transform:uppercase}
+.st-pending{background:#fef3c7;color:#92400e}
+.st-completed{background:#dcfce7;color:#166534}
+.st-failed,.st-cancelled{background:#fee2e2;color:#991b1b}
+button,a.btn{display:block;width:100%;text-align:center;background:#2f6bff;color:#fff;border:none;border-radius:9px;padding:13px;font-size:15px;font-weight:600;cursor:pointer;text-decoration:none;margin-top:8px}
+a.btn.secondary{background:#fff;color:#374151;border:1px solid #d1d5db}
+.foot{margin-top:20px;text-align:center;color:#9ca3af;font-size:11px}
+</style></head><body>
+<div class="card">
+  <h1>{{.AppName}}</h1>
+  <div class="merchant">Paiement sécurisé via ABMCY Core</div>
+  {{if .IsPayable}}
+    <div class="amount">{{.AmountFmt}} FCFA</div>
+    {{if .Description}}<div class="desc">{{.Description}}</div>{{else}}<div class="desc">Commande {{.AppRef}}</div>{{end}}
+    <a class="btn" href="{{.RedirectURL}}">Payer maintenant</a>
+    {{if .ReturnURL}}<a class="btn secondary" href="{{.ReturnURL}}">Annuler et revenir</a>{{end}}
+  {{else}}
+    <div class="amount">{{.AmountFmt}} FCFA</div>
+    <p>Statut du paiement : <span class="st st-{{.Status}}">{{.StatusLabel}}</span></p>
+    {{if .FailureReason}}<p class="desc">{{.FailureReason}}</p>{{end}}
+    {{if .ReturnURL}}<a class="btn" href="{{.ReturnURL}}">Revenir à la boutique</a>{{end}}
+  {{end}}
+  <div class="foot">core.diarra.app</div>
+</div>
+<script>
+// Si cette page a été ouverte par le widget (window.opener), on prévient
+// l'app du résultat puis on ferme. Sur un statut final, on ferme aussi
+// automatiquement au bout de 2s si personne ne l'a fermée.
+(function () {
+  var status = {{.Status}};
+  if (window.opener && !window.opener.closed) {
+    try { window.opener.postMessage({ abmcy_pay: true, status: status, ref: {{.AppRef}} }, '*'); } catch (e) {}
+  }
+  if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+    setTimeout(function () { if (window.opener && !window.opener.closed) window.close(); }, 2000);
+  }
+})();
+</script>
+</body></html>`))
+
+type hostedPayView struct {
+	AppName       string
+	AppRef        string
+	AmountFmt     string
+	Description   string
+	Status        string
+	StatusLabel   string
+	FailureReason string
+	RedirectURL   string
+	ReturnURL     string
+	IsPayable     bool
+}
+
+// HostedPay — GET /pay/{ref} : page de paiement hébergée, ouverte par le
+// NAVIGATEUR de l'utilisateur final (aucune auth). {ref} = diarra_client_ref
+// renvoyé dans hosted_pay_url par /v1/pay. Si le paiement est encore
+// payable, un bouton renvoie vers la page PawaPay ; sinon on affiche le
+// statut final et un lien de retour vers la boutique (return_url).
+func (h *PaymentHandler) HostedPay(w http.ResponseWriter, r *http.Request) {
+	ref := chi.URLParam(r, "ref")
+	pw, err := h.appRepo.FindPaymentByDiarraRefPublic(r.Context(), ref)
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte("<!doctype html><meta charset=utf-8><p style=\"font:16px sans-serif;text-align:center;margin-top:20vh\">Paiement introuvable.</p>"))
+		return
+	}
+	p := pw.Payment
+
+	// Un paiement déjà terminé côté navigateur : renvoyer directement à la
+	// boutique s'il y a une return_url, plutôt que d'afficher une page morte.
+	if p.Status == model.PaymentCompleted && p.ReturnURL != nil && *p.ReturnURL != "" {
+		http.Redirect(w, r, appendQuery(*p.ReturnURL, "status", "completed", "ref", p.AppRef), http.StatusFound)
+		return
+	}
+
+	view := hostedPayView{
+		AppName:     pw.AppName,
+		AppRef:      p.AppRef,
+		AmountFmt:   groupThousands(p.AmountCFA),
+		Status:      p.Status,
+		StatusLabel: statusLabelFR(p.Status),
+		IsPayable:   (p.Status == model.PaymentPending || p.Status == model.PaymentProcessing) && p.RedirectURL != nil && *p.RedirectURL != "",
+	}
+	if p.Description != nil {
+		view.Description = *p.Description
+	}
+	if p.FailureReason != nil {
+		view.FailureReason = *p.FailureReason
+	}
+	if p.RedirectURL != nil {
+		view.RedirectURL = *p.RedirectURL
+	}
+	if p.ReturnURL != nil {
+		view.ReturnURL = *p.ReturnURL
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := hostedPayTmpl.Execute(w, view); err != nil {
+		log.Printf("hosted pay: rendu template: %v", err)
+	}
+}
+
+func statusLabelFR(s string) string {
+	switch s {
+	case model.PaymentCompleted:
+		return "Payé"
+	case model.PaymentFailed:
+		return "Échoué"
+	case model.PaymentCancelled:
+		return "Annulé"
+	case model.PaymentProcessing:
+		return "En cours"
+	default:
+		return "En attente"
+	}
+}
+
+func groupThousands(n int) string {
+	s := fmt.Sprintf("%d", n)
+	if len(s) <= 3 {
+		return s
+	}
+	var out []byte
+	pre := len(s) % 3
+	if pre > 0 {
+		out = append(out, s[:pre]...)
+	}
+	for i := pre; i < len(s); i += 3 {
+		if len(out) > 0 {
+			out = append(out, ' ')
+		}
+		out = append(out, s[i:i+3]...)
+	}
+	return string(out)
+}
+
+func appendQuery(base string, kv ...string) string {
+	u, err := url.Parse(base)
+	if err != nil {
+		return base
+	}
+	q := u.Query()
+	for i := 0; i+1 < len(kv); i += 2 {
+		q.Set(kv[i], kv[i+1])
+	}
+	u.RawQuery = q.Encode()
+	return u.String()
 }

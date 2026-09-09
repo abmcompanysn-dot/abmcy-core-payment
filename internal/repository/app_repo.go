@@ -83,20 +83,20 @@ func scanApp(row pgx.Row) (*model.App, error) {
 // --- Payments -------------------------------------------------------------
 
 const paymentColumns = `id, app_id, app_ref, diarra_client_ref, type, provider, status, failure_reason,
-	amount_cfa, currency, description, redirect_url, callback_url,
+	amount_cfa, currency, description, redirect_url, callback_url, return_url,
 	relay_status, relay_attempts, relay_last_error, relay_last_attempt_at,
 	created_at, updated_at`
 
 // Mêmes colonnes que paymentColumns, préfixées "p." pour les jointures.
 const paymentColumnsP = `p.id, p.app_id, p.app_ref, p.diarra_client_ref, p.type, p.provider, p.status, p.failure_reason,
-	p.amount_cfa, p.currency, p.description, p.redirect_url, p.callback_url,
+	p.amount_cfa, p.currency, p.description, p.redirect_url, p.callback_url, p.return_url,
 	p.relay_status, p.relay_attempts, p.relay_last_error, p.relay_last_attempt_at,
 	p.created_at, p.updated_at`
 
 func scanPaymentRow(row pgx.Row) (*model.Payment, error) {
 	p := &model.Payment{}
 	err := row.Scan(&p.ID, &p.AppID, &p.AppRef, &p.DiarraClientRef, &p.Type, &p.Provider, &p.Status, &p.FailureReason,
-		&p.AmountCFA, &p.Currency, &p.Description, &p.RedirectURL, &p.CallbackURL,
+		&p.AmountCFA, &p.Currency, &p.Description, &p.RedirectURL, &p.CallbackURL, &p.ReturnURL,
 		&p.RelayStatus, &p.RelayAttempts, &p.RelayLastError, &p.RelayLastAttemptAt,
 		&p.CreatedAt, &p.UpdatedAt)
 	return p, err
@@ -121,15 +121,38 @@ type CreatePaymentParams struct {
 	Currency        string
 	Description     *string
 	CallbackURL     *string
+	ReturnURL       *string
 }
 
 func (r *AppRepo) CreatePayment(ctx context.Context, p CreatePaymentParams) (*model.Payment, error) {
 	row := r.pool.QueryRow(ctx,
-		`INSERT INTO payments (app_id, app_ref, diarra_client_ref, amount_cfa, currency, description, callback_url)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		`INSERT INTO payments (app_id, app_ref, diarra_client_ref, amount_cfa, currency, description, callback_url, return_url)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		 RETURNING `+paymentColumns,
-		p.AppID, p.AppRef, p.DiarraClientRef, p.AmountCFA, p.Currency, p.Description, p.CallbackURL)
+		p.AppID, p.AppRef, p.DiarraClientRef, p.AmountCFA, p.Currency, p.Description, p.CallbackURL, p.ReturnURL)
 	return scanPayment(row)
+}
+
+// FindPaymentByDiarraRefPublic — lecture SANS auth pour la page de paiement
+// hébergée (/pay/{ref}). Renvoie aussi le nom de l'app pour l'affichage.
+func (r *AppRepo) FindPaymentByDiarraRefPublic(ctx context.Context, diarraClientRef string) (*model.PaymentWithApp, error) {
+	row := r.pool.QueryRow(ctx,
+		`SELECT `+paymentColumnsP+`, a.name
+		 FROM payments p JOIN apps a ON a.id = p.app_id
+		 WHERE p.diarra_client_ref = $1`, diarraClientRef)
+	pw := &model.PaymentWithApp{Payment: &model.Payment{}}
+	p := pw.Payment
+	err := row.Scan(&p.ID, &p.AppID, &p.AppRef, &p.DiarraClientRef, &p.Type, &p.Provider, &p.Status, &p.FailureReason,
+		&p.AmountCFA, &p.Currency, &p.Description, &p.RedirectURL, &p.CallbackURL, &p.ReturnURL,
+		&p.RelayStatus, &p.RelayAttempts, &p.RelayLastError, &p.RelayLastAttemptAt,
+		&p.CreatedAt, &p.UpdatedAt, &pw.AppName)
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			return nil, ErrPaymentNotFound
+		}
+		return nil, err
+	}
+	return pw, nil
 }
 
 func (r *AppRepo) FindPaymentByAppRef(ctx context.Context, appID, appRef string) (*model.Payment, error) {

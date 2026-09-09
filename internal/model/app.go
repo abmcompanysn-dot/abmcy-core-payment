@@ -53,6 +53,10 @@ type Payment struct {
 	Description     *string `json:"description,omitempty"`
 	RedirectURL     *string `json:"redirect_url,omitempty"`
 	CallbackURL     *string `json:"callback_url,omitempty"`
+	// ReturnURL : où renvoyer le NAVIGATEUR de l'utilisateur final une fois
+	// le paiement terminé (page hébergée / widget). Distincte de CallbackURL
+	// (notification serveur-à-serveur). Voir migration 003.
+	ReturnURL *string `json:"return_url,omitempty"`
 	// Suivi du relais ABMCY Core -> app (voir migration 002).
 	RelayStatus        string     `json:"relay_status"`
 	RelayAttempts      int        `json:"relay_attempts"`
@@ -76,4 +80,5 @@ type CreatePaymentInput struct {
 	Country     string `json:"country"`
 	Description string `json:"description,omitempty"`
 	CallbackURL string `json:"callback_url,omitempty"`
+	ReturnURL   string `json:"return_url,omitempty"`
 }

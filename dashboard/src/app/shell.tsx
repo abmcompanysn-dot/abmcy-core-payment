@@ -1,12 +1,12 @@
 'use client';
 
 import { usePathname, useRouter } from 'next/navigation';
-import { api } from '@/lib/bp';
+import { api, BASE_PATH } from '@/lib/bp';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 
 export function Shell({ children }: { children: ReactNode }) {
-  const path = usePathname();
+  const path = usePathname(); // inclut le basePath (ex. /console/payments)
   const router = useRouter();
 
   async function logout() {
@@ -16,7 +16,7 @@ export function Shell({ children }: { children: ReactNode }) {
   }
 
   const link = (href: string, label: string) => (
-    <Link href={href} className={path.startsWith(href) ? 'active' : ''}>
+    <Link href={href} className={path.startsWith(`${BASE_PATH}${href}`) ? 'active' : ''}>
       {label}
     </Link>
   );
@@ -28,6 +28,7 @@ export function Shell({ children }: { children: ReactNode }) {
         <nav>
           {link('/payments', 'Paiements')}
           {link('/apps', 'Applications')}
+          {link('/docs', 'Documentation')}
           <a onClick={logout} style={{ cursor: 'pointer' }}>
             Déconnexion
           </a>

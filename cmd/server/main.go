@@ -99,6 +99,13 @@ func main() {
 	// handler, pas de middleware app ici — l'appelant est DIARRA, pas une app).
 	r.Post("/webhooks/diarra", paymentHandler.DiarraCallback)
 
+	// Page de paiement hébergée, ouverte par le navigateur de l'utilisateur
+	// final (aucune auth). L'app ouvre hosted_pay_url (renvoyée par /v1/pay).
+	r.Get("/pay/{ref}", paymentHandler.HostedPay)
+
+	// SDK navigateur (statique, cacheable).
+	r.Get("/widget/abmcy-pay.js", paymentHandler.WidgetJS)
+
 	// Administration d'ABMCY Core : création/désactivation des apps clientes.
 	// Jeton unique porté par ABMCY_ADMIN_TOKEN (voir middleware.RequireAdmin).
 	adminToken := os.Getenv("ABMCY_ADMIN_TOKEN")
