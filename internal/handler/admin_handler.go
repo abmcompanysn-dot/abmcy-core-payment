@@ -6,20 +6,29 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 
 	"github.com/abmcy/core/internal/auth"
+	"github.com/abmcy/core/internal/model"
 	"github.com/abmcy/core/internal/repository"
 	"github.com/go-chi/chi/v5"
 )
 
-type AdminHandler struct {
-	appRepo *repository.AppRepo
+// relayer : ce que l'admin peut redéclencher (implémenté par PaymentHandler).
+type relayer interface {
+	RelayPayment(ctx context.Context, p *model.Payment) error
 }
 
-func NewAdminHandler(appRepo *repository.AppRepo) *AdminHandler {
-	return &AdminHandler{appRepo: appRepo}
+type AdminHandler struct {
+	appRepo *repository.AppRepo
+	relay   relayer
+}
+
+func NewAdminHandler(appRepo *repository.AppRepo, relay relayer) *AdminHandler {
+	return &AdminHandler{appRepo: appRepo, relay: relay}
 }
 
 // ListApps — GET /admin/apps
@@ -80,6 +89,57 @@ func (h *AdminHandler) CreateApp(w http.ResponseWriter, r *http.Request) {
 		"api_key":     apiKey,     // affichée une seule fois — à transmettre à l'app cliente maintenant
 		"hmac_secret": hmacSecret, // idem : ni l'une ni l'autre ne seront jamais revisibles après cette réponse
 	})
+}
+
+// ListPayments — GET /admin/payments?app_id=&status=&limit=&offset=
+func (h *AdminHandler) ListPayments(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	offset, _ := strconv.Atoi(q.Get("offset"))
+	payments, err := h.appRepo.ListPayments(r.Context(), repository.ListPaymentsFilter{
+		AppID:  q.Get("app_id"),
+		Status: q.Get("status"),
+		Limit:  limit,
+		Offset: offset,
+	})
+	if err != nil {
+		http.Error(w, `{"error":"list_failed"}`, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"payments": payments})
+}
+
+// GetPayment — GET /admin/payments/{id}
+func (h *AdminHandler) GetPayment(w http.ResponseWriter, r *http.Request) {
+	p, err := h.appRepo.FindPaymentByID(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, `{"error":"not_found"}`, http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{"payment": p})
+}
+
+// RelayPayment — POST /admin/payments/{id}/relay : redéclenche à la main le
+// relais vers l'app cliente (callback raté, app remise en ligne...). Réponse
+// synchrone avec l'issue, pour que le dashboard l'affiche tout de suite.
+func (h *AdminHandler) RelayPayment(w http.ResponseWriter, r *http.Request) {
+	p, err := h.appRepo.FindPaymentByID(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, `{"error":"not_found"}`, http.StatusNotFound)
+		return
+	}
+	relayErr := h.relay.RelayPayment(r.Context(), p)
+	// Recharge pour renvoyer relay_status / relay_last_error à jour.
+	fresh, _ := h.appRepo.FindPaymentByID(r.Context(), p.ID)
+	w.Header().Set("Content-Type", "application/json")
+	if relayErr != nil {
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": relayErr.Error(), "payment": fresh})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "payment": fresh})
 }
 
 // SetAppActive — PUT /admin/apps/{id}/active. Corps : {"active": true|false}.

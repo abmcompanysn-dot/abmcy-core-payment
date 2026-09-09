@@ -77,7 +77,7 @@ func main() {
 
 	appRepo := repository.NewAppRepo(pool)
 	paymentHandler := handler.NewPaymentHandler(appRepo, diarra, diarraHMACSecretHash, selfCallbackURL)
-	adminHandler := handler.NewAdminHandler(appRepo)
+	adminHandler := handler.NewAdminHandler(appRepo, paymentHandler)
 
 	r := chi.NewRouter()
 	r.Use(chimw.Logger)
@@ -107,6 +107,9 @@ func main() {
 		r.Get("/apps", adminHandler.ListApps)
 		r.Post("/apps", adminHandler.CreateApp)
 		r.Put("/apps/{id}/active", adminHandler.SetAppActive)
+		r.Get("/payments", adminHandler.ListPayments)
+		r.Get("/payments/{id}", adminHandler.GetPayment)
+		r.Post("/payments/{id}/relay", adminHandler.RelayPayment)
 	})
 
 	port := os.Getenv("PORT")

@@ -16,6 +16,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -224,19 +225,37 @@ func (h *PaymentHandler) DiarraCallback(w http.ResponseWriter, r *http.Request) 
 	payment.Status = payload.Status
 	payment.FailureReason = failureReason
 
-	go h.relayToApp(payment)
+	go func() {
+		if err := h.RelayPayment(context.Background(), payment); err != nil {
+			log.Printf("relais app: payment=%s: %v", payment.ID, err)
+		}
+	}()
 
 	w.WriteHeader(http.StatusOK)
 }
 
-// relayToApp notifie l'app cliente (POST callback_url) qu'un paiement a
-// changé de statut — best-effort, en tâche de fond, même principe que
-// WebhookHandler.relayGatewayCallback côté DIARRA (jamais bloquant, un
-// callback manqué se rattrape via GET /v1/payments/{app_ref}).
-func (h *PaymentHandler) relayToApp(p *model.Payment) {
+// RelayPayment notifie l'app cliente (POST callback_url signé) qu'un
+// paiement a changé de statut, et enregistre l'issue (relay_status) pour le
+// dashboard admin. Best-effort au sens où un échec n'annule rien côté ABMCY
+// Core (l'app se resynchronise via GET /v1/payments/{app_ref} ou un renvoi
+// manuel), mais l'issue est toujours tracée — jamais silencieuse. Réutilisé
+// tel quel par AdminHandler pour le bouton "renvoyer le relais".
+func (h *PaymentHandler) RelayPayment(ctx context.Context, p *model.Payment) error {
 	if p.CallbackURL == nil || *p.CallbackURL == "" {
-		return
+		return h.appRepo.SetRelayResult(ctx, p.ID, model.RelaySkipped, nil)
 	}
+
+	// Signature identique à celle que DIARRA nous envoie (HMAC du corps brut,
+	// clé = hash du secret) mais avec le secret HMAC DE L'APP : l'app vérifie
+	// que le callback vient bien d'ABMCY Core (voir middleware.RequireApp
+	// côté vérif des requêtes entrantes de l'app).
+	app, err := h.appRepo.FindByID(ctx, p.AppID)
+	if err != nil {
+		msg := "app introuvable pour la signature du relais"
+		_ = h.appRepo.SetRelayResult(ctx, p.ID, model.RelayFailed, &msg)
+		return err
+	}
+
 	body, err := json.Marshal(map[string]interface{}{
 		"app_ref":        p.AppRef,
 		"status":         p.Status,
@@ -244,25 +263,33 @@ func (h *PaymentHandler) relayToApp(p *model.Payment) {
 		"failure_reason": p.FailureReason,
 	})
 	if err != nil {
-		return
+		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+
+	reqCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, *p.CallbackURL, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, *p.CallbackURL, bytes.NewReader(body))
 	if err != nil {
-		return
+		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
+	mac := hmac.New(sha256.New, []byte(app.HMACSecretHash))
+	mac.Write(body)
+	req.Header.Set("X-Abmcy-Signature", hex.EncodeToString(mac.Sum(nil)))
+
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
-		log.Printf("relais app: callback %s injoignable pour payment=%s: %v", *p.CallbackURL, p.ID, err)
-		return
+		msg := err.Error()
+		_ = h.appRepo.SetRelayResult(ctx, p.ID, model.RelayFailed, &msg)
+		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		log.Printf("relais app: callback %s a répondu %d pour payment=%s", *p.CallbackURL, resp.StatusCode, p.ID)
+		msg := fmt.Sprintf("callback a répondu HTTP %d", resp.StatusCode)
+		_ = h.appRepo.SetRelayResult(ctx, p.ID, model.RelayFailed, &msg)
+		return errors.New(msg)
 	}
+	return h.appRepo.SetRelayResult(ctx, p.ID, model.RelayDelivered, nil)
 }
 
 func verifySignature(hmacSecretHash string, body []byte, sigHex string) bool {
