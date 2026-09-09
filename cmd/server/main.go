@@ -86,8 +86,10 @@ func main() {
 	}
 
 	appRepo := repository.NewAppRepo(pool)
+	signupRepo := repository.NewSignupRepo(pool)
 	paymentHandler := handler.NewPaymentHandler(appRepo, diarra, diarraHMACSecretHash, selfCallbackURL, usdRate)
 	adminHandler := handler.NewAdminHandler(appRepo, paymentHandler)
+	signupHandler := handler.NewSignupHandler(signupRepo, appRepo)
 
 	r := chi.NewRouter()
 	r.Use(chimw.Logger)
@@ -96,6 +98,9 @@ func main() {
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"status":"ok"}`))
 	})
+
+	// Page d'accueil publique (landing).
+	r.Get("/", paymentHandler.Landing)
 
 	// API pour les apps clientes — chaque requête authentifiée par
 	// X-App-Key + signature HMAC de l'app (voir middleware.RequireApp).
@@ -116,6 +121,9 @@ func main() {
 	// SDK navigateur (statique, cacheable).
 	r.Get("/widget/abmcy-pay.js", paymentHandler.WidgetJS)
 
+	// Inscription publique depuis la landing page (aucune auth).
+	r.Post("/public/signup", signupHandler.PublicSignup)
+
 	// Administration d'ABMCY Core : création/désactivation des apps clientes.
 	// Jeton unique porté par ABMCY_ADMIN_TOKEN (voir middleware.RequireAdmin).
 	adminToken := os.Getenv("ABMCY_ADMIN_TOKEN")
@@ -128,6 +136,9 @@ func main() {
 		r.Get("/payments", adminHandler.ListPayments)
 		r.Get("/payments/{id}", adminHandler.GetPayment)
 		r.Post("/payments/{id}/relay", adminHandler.RelayPayment)
+		r.Get("/signups", signupHandler.ListSignups)
+		r.Post("/signups/{id}/approve", signupHandler.ApproveSignup)
+		r.Post("/signups/{id}/reject", signupHandler.RejectSignup)
 	})
 
 	port := os.Getenv("PORT")

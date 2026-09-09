@@ -28,6 +28,7 @@ export function Shell({ children }: { children: ReactNode }) {
         <nav>
           {link('/payments', 'Paiements')}
           {link('/apps', 'Applications')}
+          {link('/signups', 'Demandes')}
           {link('/docs', 'Documentation')}
           <a onClick={logout} style={{ cursor: 'pointer' }}>
             Déconnexion

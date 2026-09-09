@@ -42,6 +42,23 @@ export type Payment = {
   updated_at: string;
 };
 
+export type SignupRequest = {
+  id: string;
+  business_name: string;
+  contact_name: string;
+  email: string;
+  phone?: string | null;
+  website?: string | null;
+  country?: string | null;
+  description?: string | null;
+  expected_volume?: string | null;
+  status: 'pending' | 'approved' | 'rejected';
+  review_note?: string | null;
+  app_id?: string | null;
+  created_at: string;
+  reviewed_at?: string | null;
+};
+
 async function token(): Promise<string | null> {
   const c = await cookies();
   return c.get(TOKEN_COOKIE)?.value ?? null;
