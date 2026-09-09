@@ -20,6 +20,7 @@ import (
 // relayer : ce que l'admin peut redéclencher (implémenté par PaymentHandler).
 type relayer interface {
 	RelayPayment(ctx context.Context, p *model.Payment) error
+	RefundDeposit(ctx context.Context, deposit *model.Payment) (*model.Payment, error)
 }
 
 type AdminHandler struct {
@@ -143,6 +144,23 @@ func (h *AdminHandler) RelayPayment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "payment": fresh})
+}
+
+// RefundPayment — POST /admin/payments/{id}/refund : rembourse à la main un
+// dépôt "completed". Toujours 200, {ok, error?, refund?}.
+func (h *AdminHandler) RefundPayment(w http.ResponseWriter, r *http.Request) {
+	deposit, err := h.appRepo.FindPaymentByID(r.Context(), chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, `{"error":"not_found"}`, http.StatusNotFound)
+		return
+	}
+	refund, refErr := h.relay.RefundDeposit(r.Context(), deposit)
+	w.Header().Set("Content-Type", "application/json")
+	if refErr != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": refErr.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "refund": refund})
 }
 
 // SetAppKYC — PUT /admin/apps/{id}/kyc. Corps : {"level": "none"|"verified"}.

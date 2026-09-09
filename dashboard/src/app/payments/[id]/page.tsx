@@ -15,6 +15,8 @@ export default function PaymentDetailPage() {
   const [loading, setLoading] = useState(true);
   const [relaying, setRelaying] = useState(false);
   const [relayMsg, setRelayMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [refunding, setRefunding] = useState(false);
+  const [refundMsg, setRefundMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -46,6 +48,28 @@ export default function PaymentDetailPage() {
     }
   }
 
+  async function refund() {
+    if (!confirm('Rembourser intégralement ce paiement ? La commission ABMCY Core n’est pas rendue.')) return;
+    setRefunding(true);
+    setRefundMsg(null);
+    try {
+      const res = await fetch(api(`/api/payments/${id}/refund`), { method: 'POST' });
+      const b = await res.json().catch(() => ({}));
+      if (b.ok) {
+        setRefundMsg({
+          ok: true,
+          text: `Remboursement créé (statut ${b.refund?.status || 'en cours'}).`,
+        });
+      } else {
+        setRefundMsg({ ok: false, text: `Échec : ${b.error || 'erreur inconnue'}` });
+      }
+    } catch (e) {
+      setRefundMsg({ ok: false, text: `Erreur réseau : ${String(e)}` });
+    } finally {
+      setRefunding(false);
+    }
+  }
+
   return (
     <Shell>
       <p>
@@ -68,8 +92,16 @@ export default function PaymentDetailPage() {
               <dt>Application</dt>
               <dd>{p.app_name || '—'}</dd>
               <dt>Type</dt>
-              <dd>{p.type}</dd>
-              <dt>Montant payé</dt>
+              <dd>
+                {p.type}
+                {p.refund_of_payment_id && (
+                  <>
+                    {' '}
+                    <Link href={`/payments/${p.refund_of_payment_id}`}>← paiement remboursé</Link>
+                  </>
+                )}
+              </dd>
+              <dt>Montant {p.type === 'refund' ? 'remboursé' : 'payé'}</dt>
               <dd>
                 {fmtCFA(p.amount_cfa)} {p.currency}
               </dd>
@@ -93,6 +125,27 @@ export default function PaymentDetailPage() {
               <dt>Mis à jour</dt>
               <dd>{fmtDate(p.updated_at)}</dd>
             </dl>
+
+            {p.type === 'deposit' && p.status === 'completed' && (
+              <>
+                {refundMsg && (
+                  <div
+                    className={refundMsg.ok ? 'ok-box' : 'err-box'}
+                    style={{ marginTop: 12 }}
+                  >
+                    {refundMsg.text}
+                  </div>
+                )}
+                <button
+                  className="danger"
+                  style={{ marginTop: 12 }}
+                  disabled={refunding}
+                  onClick={refund}
+                >
+                  {refunding ? 'Remboursement…' : 'Rembourser ce paiement'}
+                </button>
+              </>
+            )}
           </div>
 
           <div className="panel">

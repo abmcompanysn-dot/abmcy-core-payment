@@ -210,6 +210,27 @@ X-Abmcy-Signature: <hmac hex du corps brut, clé = SHA256(votre hmac_secret)>
       </div>
 
       <div className="panel">
+        <h2>6. Rembourser un paiement</h2>
+        <p>
+          <code>POST /v1/refunds</code> (mêmes en-têtes signés). Rembourse{' '}
+          <strong>intégralement</strong> un paiement au statut <code>completed</code>. La commission
+          ABMCY Core n’est pas rendue.
+        </p>
+        <pre className="mono block">
+{`{
+  "deposit_app_ref": "commande-1234",     // le paiement à rembourser
+  "refund_app_ref":  "remb-1234",          // optionnel (défaut: refund-<deposit_app_ref>)
+  "callback_url":    "https://votre-app.com/webhooks/abmcy"  // optionnel
+}`}
+        </pre>
+        <p>
+          Réponse : un <code>payment</code> de <code>type: "refund"</code>. Son statut évolue
+          (<code>processing</code> → <code>completed</code>) et déclenche le même callback signé que
+          les paiements. Idempotent sur <code>refund_app_ref</code>.
+        </p>
+      </div>
+
+      <div className="panel">
         <h2>Statuts</h2>
         <table>
           <thead>

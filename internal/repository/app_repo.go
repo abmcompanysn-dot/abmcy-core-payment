@@ -97,12 +97,14 @@ func scanAppRows(rows pgx.Rows) (*model.App, error) {
 
 const paymentColumns = `id, app_id, app_ref, diarra_client_ref, type, provider, status, failure_reason,
 	amount_cfa, fee_cfa, net_cfa, usd_rate_used, currency, description, redirect_url, callback_url, return_url,
+	refund_of_payment_id,
 	relay_status, relay_attempts, relay_last_error, relay_last_attempt_at,
 	created_at, updated_at`
 
 // Mêmes colonnes que paymentColumns, préfixées "p." pour les jointures.
 const paymentColumnsP = `p.id, p.app_id, p.app_ref, p.diarra_client_ref, p.type, p.provider, p.status, p.failure_reason,
 	p.amount_cfa, p.fee_cfa, p.net_cfa, p.usd_rate_used, p.currency, p.description, p.redirect_url, p.callback_url, p.return_url,
+	p.refund_of_payment_id,
 	p.relay_status, p.relay_attempts, p.relay_last_error, p.relay_last_attempt_at,
 	p.created_at, p.updated_at`
 
@@ -112,6 +114,7 @@ func paymentScanTargets(p *model.Payment) []any {
 	return []any{
 		&p.ID, &p.AppID, &p.AppRef, &p.DiarraClientRef, &p.Type, &p.Provider, &p.Status, &p.FailureReason,
 		&p.AmountCFA, &p.FeeCFA, &p.NetCFA, &p.USDRateUsed, &p.Currency, &p.Description, &p.RedirectURL, &p.CallbackURL, &p.ReturnURL,
+		&p.RefundOfPaymentID,
 		&p.RelayStatus, &p.RelayAttempts, &p.RelayLastError, &p.RelayLastAttemptAt,
 		&p.CreatedAt, &p.UpdatedAt,
 	}
@@ -177,9 +180,21 @@ func (r *AppRepo) FindPaymentByDiarraRefPublic(ctx context.Context, diarraClient
 	return pw, nil
 }
 
+// FindPaymentByAppRef — le DÉPÔT d'une app pour cet app_ref (type='deposit').
+// Depuis la migration 006, un app_ref peut aussi porter un remboursement ;
+// on filtre donc explicitement sur le type dépôt ici.
 func (r *AppRepo) FindPaymentByAppRef(ctx context.Context, appID, appRef string) (*model.Payment, error) {
 	row := r.pool.QueryRow(ctx,
-		`SELECT `+paymentColumns+` FROM payments WHERE app_id = $1 AND app_ref = $2`, appID, appRef)
+		`SELECT `+paymentColumns+` FROM payments WHERE app_id = $1 AND app_ref = $2 AND type = 'deposit'`,
+		appID, appRef)
+	return scanPayment(row)
+}
+
+// FindPaymentByAppRefType — variante explicite (deposit|payout|refund).
+func (r *AppRepo) FindPaymentByAppRefType(ctx context.Context, appID, appRef, typ string) (*model.Payment, error) {
+	row := r.pool.QueryRow(ctx,
+		`SELECT `+paymentColumns+` FROM payments WHERE app_id = $1 AND app_ref = $2 AND type = $3`,
+		appID, appRef, typ)
 	return scanPayment(row)
 }
 
@@ -205,6 +220,29 @@ func (r *AppRepo) UpdatePaymentStatus(ctx context.Context, id, status string, pr
 // FindPaymentByID — lecture admin d'un paiement précis (dashboard).
 func (r *AppRepo) FindPaymentByID(ctx context.Context, id string) (*model.Payment, error) {
 	row := r.pool.QueryRow(ctx, `SELECT `+paymentColumns+` FROM payments WHERE id = $1`, id)
+	return scanPayment(row)
+}
+
+// CreateRefundParams — création d'un `payments` de type 'refund'.
+type CreateRefundParams struct {
+	AppID             string
+	AppRef            string // refund_app_ref (peut = celui du dépôt, le type diffère)
+	DiarraClientRef   string // généré par ABMCY Core pour parler à DIARRA
+	RefundOfPaymentID string
+	AmountCFA         int // = montant du dépôt d'origine (remboursement total)
+	Currency          string
+	Description       *string
+	CallbackURL       *string
+}
+
+func (r *AppRepo) CreateRefundPayment(ctx context.Context, p CreateRefundParams) (*model.Payment, error) {
+	row := r.pool.QueryRow(ctx,
+		`INSERT INTO payments (app_id, app_ref, diarra_client_ref, type, refund_of_payment_id,
+		                       amount_cfa, currency, description, callback_url)
+		 VALUES ($1, $2, $3, 'refund', $4, $5, $6, $7, $8)
+		 RETURNING `+paymentColumns,
+		p.AppID, p.AppRef, p.DiarraClientRef, p.RefundOfPaymentID,
+		p.AmountCFA, p.Currency, p.Description, p.CallbackURL)
 	return scanPayment(row)
 }
 

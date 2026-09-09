@@ -34,6 +34,7 @@ export type Payment = {
   redirect_url?: string | null;
   callback_url?: string | null;
   return_url?: string | null;
+  refund_of_payment_id?: string | null;
   relay_status: string;
   relay_attempts: number;
   relay_last_error?: string | null;

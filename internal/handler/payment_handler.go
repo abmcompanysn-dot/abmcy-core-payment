@@ -204,6 +204,160 @@ func (h *PaymentHandler) hostedPayURL(diarraRef string) string {
 	return h.publicBaseURL + "/pay/" + diarraRef
 }
 
+// Refund — POST /v1/refunds (authentifié par app). Rembourse INTÉGRALEMENT
+// un dépôt "completed" de cette app. Corps : {"deposit_app_ref", "refund_app_ref"?,
+// "callback_url"?}. Idempotent : un refund_app_ref déjà utilisé renvoie le
+// remboursement existant. La commission du dépôt n'est PAS rendue.
+func (h *PaymentHandler) Refund(w http.ResponseWriter, r *http.Request) {
+	appID := middleware.GetAppID(r.Context())
+
+	var input model.CreateRefundInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, `{"error":"invalid_request"}`, http.StatusBadRequest)
+		return
+	}
+	if input.DepositAppRef == "" {
+		http.Error(w, `{"error":"deposit_app_ref_required"}`, http.StatusBadRequest)
+		return
+	}
+	refundRef := input.RefundAppRef
+	if refundRef == "" {
+		refundRef = "refund-" + input.DepositAppRef
+	}
+
+	// Idempotence sur le remboursement.
+	if existing, err := h.appRepo.FindPaymentByAppRefType(r.Context(), appID, refundRef, model.PaymentTypeRefund); err == nil {
+		writePayment(w, existing, http.StatusOK)
+		return
+	}
+
+	// Le dépôt d'origine doit exister, appartenir à cette app, et être payé.
+	deposit, err := h.appRepo.FindPaymentByAppRef(r.Context(), appID, input.DepositAppRef)
+	if err != nil {
+		http.Error(w, `{"error":"deposit_not_found"}`, http.StatusNotFound)
+		return
+	}
+	if deposit.Status != model.PaymentCompleted {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		json.NewEncoder(w).Encode(map[string]any{
+			"error":   "deposit_not_refundable",
+			"message": "Seul un paiement au statut 'completed' peut être remboursé.",
+			"status":  deposit.Status,
+		})
+		return
+	}
+
+	var callbackURL, desc *string
+	if input.CallbackURL != "" {
+		callbackURL = &input.CallbackURL
+	}
+	d := "Remboursement de " + input.DepositAppRef
+	desc = &d
+
+	diarraRef := abmcyUUID()
+	refund, err := h.appRepo.CreateRefundPayment(r.Context(), repository.CreateRefundParams{
+		AppID:             appID,
+		AppRef:            refundRef,
+		DiarraClientRef:   diarraRef,
+		RefundOfPaymentID: deposit.ID,
+		AmountCFA:         deposit.AmountCFA,
+		Currency:          deposit.Currency,
+		Description:       desc,
+		CallbackURL:       callbackURL,
+	})
+	if err != nil {
+		http.Error(w, `{"error":"refund_creation_failed"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// Passerelle : le remboursement référence le dépôt par SON
+	// diarra_client_ref (celui qu'ABMCY Core avait généré au moment du /pay).
+	tx, err := h.diarra.CreateRefund(gateway.CreateRefundInput{
+		ClientRef:        diarraRef,
+		DepositClientRef: deposit.DiarraClientRef,
+		CallbackURL:      h.selfCallbackURL,
+	})
+	if err != nil {
+		log.Printf("refund: échec via DIARRA pour refund=%s: %v", refund.ID, err)
+		reason := "diarra_refund_failed"
+		_ = h.appRepo.UpdatePaymentStatus(r.Context(), refund.ID, model.PaymentFailed, nil, &reason)
+		http.Error(w, `{"error":"refund_init_failed"}`, http.StatusBadGateway)
+		return
+	}
+	if tx.Status != "" {
+		_ = h.appRepo.UpdatePaymentStatus(r.Context(), refund.ID, normalizeStatus(tx.Status), strPtrOrNil(tx.Provider), nil)
+		refund.Status = normalizeStatus(tx.Status)
+	}
+	writePayment(w, refund, http.StatusCreated)
+}
+
+func strPtrOrNil(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// RefundDeposit — logique de remboursement réutilisable (back-office admin).
+// deposit = un Payment de type dépôt "completed". Crée le refund, appelle la
+// passerelle, renvoie le Payment de remboursement. Idempotent sur
+// refund-<app_ref>.
+func (h *PaymentHandler) RefundDeposit(ctx context.Context, deposit *model.Payment) (*model.Payment, error) {
+	if deposit.Type != model.PaymentTypeDeposit {
+		return nil, errors.New("seul un dépôt peut être remboursé")
+	}
+	if deposit.Status != model.PaymentCompleted {
+		return nil, fmt.Errorf("dépôt non remboursable (statut %s)", deposit.Status)
+	}
+	refundRef := "refund-" + deposit.AppRef
+	if existing, err := h.appRepo.FindPaymentByAppRefType(ctx, deposit.AppID, refundRef, model.PaymentTypeRefund); err == nil {
+		return existing, nil
+	}
+
+	d := "Remboursement de " + deposit.AppRef
+	diarraRef := abmcyUUID()
+	refund, err := h.appRepo.CreateRefundPayment(ctx, repository.CreateRefundParams{
+		AppID:             deposit.AppID,
+		AppRef:            refundRef,
+		DiarraClientRef:   diarraRef,
+		RefundOfPaymentID: deposit.ID,
+		AmountCFA:         deposit.AmountCFA,
+		Currency:          deposit.Currency,
+		Description:       &d,
+	})
+	if err != nil {
+		return nil, err
+	}
+	tx, err := h.diarra.CreateRefund(gateway.CreateRefundInput{
+		ClientRef:        diarraRef,
+		DepositClientRef: deposit.DiarraClientRef,
+		CallbackURL:      h.selfCallbackURL,
+	})
+	if err != nil {
+		reason := "diarra_refund_failed"
+		_ = h.appRepo.UpdatePaymentStatus(ctx, refund.ID, model.PaymentFailed, nil, &reason)
+		return h.appRepo.FindPaymentByID(ctx, refund.ID)
+	}
+	if tx.Status != "" {
+		_ = h.appRepo.UpdatePaymentStatus(ctx, refund.ID, normalizeStatus(tx.Status), strPtrOrNil(tx.Provider), nil)
+	}
+	return h.appRepo.FindPaymentByID(ctx, refund.ID)
+}
+
+// normalizeStatus — la passerelle DIARRA renvoie déjà des statuts normalisés
+// (pending|processing|completed|failed|cancelled) ; on garde ce point de
+// passage au cas où un statut inconnu remonterait.
+func normalizeStatus(s string) string {
+	switch s {
+	case model.PaymentPending, model.PaymentProcessing, model.PaymentCompleted,
+		model.PaymentFailed, model.PaymentCancelled:
+		return s
+	default:
+		return model.PaymentProcessing
+	}
+}
+
 // PaymentStatus — GET /v1/payments/{app_ref} (authentifié par app) : lit
 // l'état local, déjà tenu à jour par les callbacks DIARRA (voir
 // DiarraCallback) — pas d'appel réseau supplémentaire nécessaire.

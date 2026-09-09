@@ -81,6 +81,9 @@ type Payment struct {
 	// le paiement terminé (page hébergée / widget). Distincte de CallbackURL
 	// (notification serveur-à-serveur). Voir migration 003.
 	ReturnURL *string `json:"return_url,omitempty"`
+	// RefundOfPaymentID : pour un Payment de type "refund", l'ID du paiement
+	// (dépôt) remboursé. Voir migration 006.
+	RefundOfPaymentID *string `json:"refund_of_payment_id,omitempty"`
 	// Suivi du relais ABMCY Core -> app (voir migration 002).
 	RelayStatus        string     `json:"relay_status"`
 	RelayAttempts      int        `json:"relay_attempts"`
@@ -105,4 +108,12 @@ type CreatePaymentInput struct {
 	Description string `json:"description,omitempty"`
 	CallbackURL string `json:"callback_url,omitempty"`
 	ReturnURL   string `json:"return_url,omitempty"`
+}
+
+// CreateRefundInput — POST /v1/refunds (une app rembourse un paiement).
+// DepositAppRef = l'app_ref du dépôt d'origine (déjà "completed").
+type CreateRefundInput struct {
+	DepositAppRef string `json:"deposit_app_ref"`
+	RefundAppRef  string `json:"refund_app_ref,omitempty"` // optionnel, défaut "refund-<deposit_app_ref>"
+	CallbackURL   string `json:"callback_url,omitempty"`
 }
