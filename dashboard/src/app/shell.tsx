@@ -26,7 +26,9 @@ export function Shell({ children }: { children: ReactNode }) {
       <header className="top">
         <h1>ABMCY Core Payment</h1>
         <nav>
+          {link('/stats', 'Tableau de bord')}
           {link('/payments', 'Paiements')}
+          {link('/payouts', 'Versements')}
           {link('/apps', 'Applications')}
           {link('/signups', 'Demandes')}
           {link('/docs', 'Documentation')}

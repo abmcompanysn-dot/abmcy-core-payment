@@ -21,6 +21,7 @@ import (
 type relayer interface {
 	RelayPayment(ctx context.Context, p *model.Payment) error
 	RefundDeposit(ctx context.Context, deposit *model.Payment) (*model.Payment, error)
+	PayoutForAdmin(ctx context.Context, p PayoutAdminParams) (*model.Payment, error)
 }
 
 type AdminHandler struct {
@@ -30,6 +31,23 @@ type AdminHandler struct {
 
 func NewAdminHandler(appRepo *repository.AppRepo, relay relayer) *AdminHandler {
 	return &AdminHandler{appRepo: appRepo, relay: relay}
+}
+
+// Dashboard — GET /admin/stats?since=7|30|0 : chiffres agrégés.
+func (h *AdminHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
+	since := 30
+	if v := r.URL.Query().Get("since"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			since = n
+		}
+	}
+	d, err := h.appRepo.Dashboard(r.Context(), since)
+	if err != nil {
+		http.Error(w, `{"error":"stats_failed"}`, http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(d)
 }
 
 // ListApps — GET /admin/apps
@@ -144,6 +162,42 @@ func (h *AdminHandler) RelayPayment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "payment": fresh})
+}
+
+// CreatePayout — POST /admin/payouts : déclenche un versement depuis la
+// console. Corps : {app_id, amount_cfa, recipient_phone, recipient_operator,
+// country, description?}. Toujours 200, {ok, error?, payout?}.
+func (h *AdminHandler) CreatePayout(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		AppID             string `json:"app_id"`
+		AmountCFA         int    `json:"amount_cfa"`
+		RecipientPhone    string `json:"recipient_phone"`
+		RecipientOperator string `json:"recipient_operator"`
+		Country           string `json:"country"`
+		Description       string `json:"description"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		http.Error(w, `{"error":"invalid_request"}`, http.StatusBadRequest)
+		return
+	}
+	if in.AppID == "" {
+		http.Error(w, `{"error":"app_id_required"}`, http.StatusBadRequest)
+		return
+	}
+	payout, err := h.relay.PayoutForAdmin(r.Context(), PayoutAdminParams{
+		AppID:             in.AppID,
+		AmountCFA:         in.AmountCFA,
+		RecipientPhone:    in.RecipientPhone,
+		RecipientOperator: in.RecipientOperator,
+		Country:           in.Country,
+		Description:       in.Description,
+	})
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil {
+		json.NewEncoder(w).Encode(map[string]interface{}{"ok": false, "error": err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]interface{}{"ok": true, "payout": payout})
 }
 
 // RefundPayment — POST /admin/payments/{id}/refund : rembourse à la main un

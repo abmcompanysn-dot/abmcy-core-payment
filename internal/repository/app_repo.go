@@ -97,14 +97,14 @@ func scanAppRows(rows pgx.Rows) (*model.App, error) {
 
 const paymentColumns = `id, app_id, app_ref, diarra_client_ref, type, provider, status, failure_reason,
 	amount_cfa, fee_cfa, net_cfa, usd_rate_used, currency, description, redirect_url, callback_url, return_url,
-	refund_of_payment_id,
+	refund_of_payment_id, recipient_phone, recipient_operator, country,
 	relay_status, relay_attempts, relay_last_error, relay_last_attempt_at,
 	created_at, updated_at`
 
 // Mêmes colonnes que paymentColumns, préfixées "p." pour les jointures.
 const paymentColumnsP = `p.id, p.app_id, p.app_ref, p.diarra_client_ref, p.type, p.provider, p.status, p.failure_reason,
 	p.amount_cfa, p.fee_cfa, p.net_cfa, p.usd_rate_used, p.currency, p.description, p.redirect_url, p.callback_url, p.return_url,
-	p.refund_of_payment_id,
+	p.refund_of_payment_id, p.recipient_phone, p.recipient_operator, p.country,
 	p.relay_status, p.relay_attempts, p.relay_last_error, p.relay_last_attempt_at,
 	p.created_at, p.updated_at`
 
@@ -114,7 +114,7 @@ func paymentScanTargets(p *model.Payment) []any {
 	return []any{
 		&p.ID, &p.AppID, &p.AppRef, &p.DiarraClientRef, &p.Type, &p.Provider, &p.Status, &p.FailureReason,
 		&p.AmountCFA, &p.FeeCFA, &p.NetCFA, &p.USDRateUsed, &p.Currency, &p.Description, &p.RedirectURL, &p.CallbackURL, &p.ReturnURL,
-		&p.RefundOfPaymentID,
+		&p.RefundOfPaymentID, &p.RecipientPhone, &p.RecipientOperator, &p.Country,
 		&p.RelayStatus, &p.RelayAttempts, &p.RelayLastError, &p.RelayLastAttemptAt,
 		&p.CreatedAt, &p.UpdatedAt,
 	}
@@ -230,6 +230,9 @@ type CreateRefundParams struct {
 	DiarraClientRef   string // généré par ABMCY Core pour parler à DIARRA
 	RefundOfPaymentID string
 	AmountCFA         int // = montant du dépôt d'origine (remboursement total)
+	FeeCFA            int
+	NetCFA            int
+	USDRateUsed       int
 	Currency          string
 	Description       *string
 	CallbackURL       *string
@@ -238,11 +241,41 @@ type CreateRefundParams struct {
 func (r *AppRepo) CreateRefundPayment(ctx context.Context, p CreateRefundParams) (*model.Payment, error) {
 	row := r.pool.QueryRow(ctx,
 		`INSERT INTO payments (app_id, app_ref, diarra_client_ref, type, refund_of_payment_id,
-		                       amount_cfa, currency, description, callback_url)
-		 VALUES ($1, $2, $3, 'refund', $4, $5, $6, $7, $8)
+		                       amount_cfa, fee_cfa, net_cfa, usd_rate_used, currency, description, callback_url)
+		 VALUES ($1, $2, $3, 'refund', $4, $5, $6, $7, $8, $9, $10, $11)
 		 RETURNING `+paymentColumns,
 		p.AppID, p.AppRef, p.DiarraClientRef, p.RefundOfPaymentID,
-		p.AmountCFA, p.Currency, p.Description, p.CallbackURL)
+		p.AmountCFA, p.FeeCFA, p.NetCFA, p.USDRateUsed, p.Currency, p.Description, p.CallbackURL)
+	return scanPayment(row)
+}
+
+// CreatePayoutParams — création d'un `payments` de type 'payout'.
+type CreatePayoutParams struct {
+	AppID             string
+	AppRef            string
+	DiarraClientRef   string
+	AmountCFA         int
+	FeeCFA            int
+	NetCFA            int
+	USDRateUsed       int
+	Currency          string
+	RecipientPhone    string
+	RecipientOperator string
+	Country           string
+	Description       *string
+	CallbackURL       *string
+}
+
+func (r *AppRepo) CreatePayoutPayment(ctx context.Context, p CreatePayoutParams) (*model.Payment, error) {
+	row := r.pool.QueryRow(ctx,
+		`INSERT INTO payments (app_id, app_ref, diarra_client_ref, type,
+		                       amount_cfa, fee_cfa, net_cfa, usd_rate_used, currency, description, callback_url,
+		                       recipient_phone, recipient_operator, country)
+		 VALUES ($1, $2, $3, 'payout', $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+		 RETURNING `+paymentColumns,
+		p.AppID, p.AppRef, p.DiarraClientRef,
+		p.AmountCFA, p.FeeCFA, p.NetCFA, p.USDRateUsed, p.Currency, p.Description, p.CallbackURL,
+		p.RecipientPhone, p.RecipientOperator, p.Country)
 	return scanPayment(row)
 }
 

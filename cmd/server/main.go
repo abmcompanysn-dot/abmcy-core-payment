@@ -107,6 +107,7 @@ func main() {
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(middleware.RequireApp(paymentHandler.LookupApp))
 		r.Post("/pay", paymentHandler.Pay)
+		r.Post("/payouts", paymentHandler.Payout)
 		r.Post("/refunds", paymentHandler.Refund)
 		r.Get("/payments/{app_ref}", paymentHandler.PaymentStatus)
 	})
@@ -130,6 +131,7 @@ func main() {
 	adminToken := os.Getenv("ABMCY_ADMIN_TOKEN")
 	r.Route("/admin", func(r chi.Router) {
 		r.Use(middleware.RequireAdmin(adminToken))
+		r.Get("/stats", adminHandler.Dashboard)
 		r.Get("/apps", adminHandler.ListApps)
 		r.Post("/apps", adminHandler.CreateApp)
 		r.Put("/apps/{id}/active", adminHandler.SetAppActive)
@@ -138,6 +140,7 @@ func main() {
 		r.Get("/payments/{id}", adminHandler.GetPayment)
 		r.Post("/payments/{id}/relay", adminHandler.RelayPayment)
 		r.Post("/payments/{id}/refund", adminHandler.RefundPayment)
+		r.Post("/payouts", adminHandler.CreatePayout)
 		r.Get("/signups", signupHandler.ListSignups)
 		r.Post("/signups/{id}/approve", signupHandler.ApproveSignup)
 		r.Post("/signups/{id}/reject", signupHandler.RejectSignup)

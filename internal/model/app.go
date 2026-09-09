@@ -84,6 +84,10 @@ type Payment struct {
 	// RefundOfPaymentID : pour un Payment de type "refund", l'ID du paiement
 	// (dépôt) remboursé. Voir migration 006.
 	RefundOfPaymentID *string `json:"refund_of_payment_id,omitempty"`
+	// Destinataire d'un payout (type "payout"). Voir migration 007.
+	RecipientPhone    *string `json:"recipient_phone,omitempty"`
+	RecipientOperator *string `json:"recipient_operator,omitempty"`
+	Country           *string `json:"country,omitempty"`
 	// Suivi du relais ABMCY Core -> app (voir migration 002).
 	RelayStatus        string     `json:"relay_status"`
 	RelayAttempts      int        `json:"relay_attempts"`
@@ -116,4 +120,17 @@ type CreateRefundInput struct {
 	DepositAppRef string `json:"deposit_app_ref"`
 	RefundAppRef  string `json:"refund_app_ref,omitempty"` // optionnel, défaut "refund-<deposit_app_ref>"
 	CallbackURL   string `json:"callback_url,omitempty"`
+}
+
+// CreatePayoutInput — POST /v1/payouts (une app / l'admin envoie de l'argent
+// vers un numéro mobile money). AmountCFA est le montant DÉBITÉ ; le
+// destinataire reçoit AmountCFA - commission.
+type CreatePayoutInput struct {
+	AppRef            string `json:"app_ref"`
+	AmountCFA         int    `json:"amount_cfa"`
+	RecipientPhone    string `json:"recipient_phone"`
+	RecipientOperator string `json:"recipient_operator"` // ex. "ORANGE_SEN", "WAVE_SEN", "MTN_CIV"…
+	Country           string `json:"country"`
+	Description       string `json:"description,omitempty"`
+	CallbackURL       string `json:"callback_url,omitempty"`
 }

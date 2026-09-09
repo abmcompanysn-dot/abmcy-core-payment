@@ -255,6 +255,9 @@ func (h *PaymentHandler) Refund(w http.ResponseWriter, r *http.Request) {
 	d := "Remboursement de " + input.DepositAppRef
 	desc = &d
 
+	// Commission aussi sur le remboursement (règle : les 3 types).
+	fee := fees.Compute(deposit.AmountCFA, h.usdRate)
+
 	diarraRef := abmcyUUID()
 	refund, err := h.appRepo.CreateRefundPayment(r.Context(), repository.CreateRefundParams{
 		AppID:             appID,
@@ -262,6 +265,9 @@ func (h *PaymentHandler) Refund(w http.ResponseWriter, r *http.Request) {
 		DiarraClientRef:   diarraRef,
 		RefundOfPaymentID: deposit.ID,
 		AmountCFA:         deposit.AmountCFA,
+		FeeCFA:            fee.FeeCFA,
+		NetCFA:            fee.NetCFA,
+		USDRateUsed:       fee.USDRateUsed,
 		Currency:          deposit.Currency,
 		Description:       desc,
 		CallbackURL:       callbackURL,
@@ -316,6 +322,7 @@ func (h *PaymentHandler) RefundDeposit(ctx context.Context, deposit *model.Payme
 	}
 
 	d := "Remboursement de " + deposit.AppRef
+	fee := fees.Compute(deposit.AmountCFA, h.usdRate)
 	diarraRef := abmcyUUID()
 	refund, err := h.appRepo.CreateRefundPayment(ctx, repository.CreateRefundParams{
 		AppID:             deposit.AppID,
@@ -323,6 +330,9 @@ func (h *PaymentHandler) RefundDeposit(ctx context.Context, deposit *model.Payme
 		DiarraClientRef:   diarraRef,
 		RefundOfPaymentID: deposit.ID,
 		AmountCFA:         deposit.AmountCFA,
+		FeeCFA:            fee.FeeCFA,
+		NetCFA:            fee.NetCFA,
+		USDRateUsed:       fee.USDRateUsed,
 		Currency:          deposit.Currency,
 		Description:       &d,
 	})
@@ -356,6 +366,149 @@ func normalizeStatus(s string) string {
 	default:
 		return model.PaymentProcessing
 	}
+}
+
+// Payout — POST /v1/payouts (authentifié par app). Envoie AmountCFA - commission
+// vers un numéro mobile money. Idempotent sur app_ref (type payout).
+func (h *PaymentHandler) Payout(w http.ResponseWriter, r *http.Request) {
+	appID := middleware.GetAppID(r.Context())
+
+	var input model.CreatePayoutInput
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		http.Error(w, `{"error":"invalid_request"}`, http.StatusBadRequest)
+		return
+	}
+	if input.AppRef == "" || input.AmountCFA <= 0 || input.RecipientPhone == "" ||
+		input.RecipientOperator == "" || input.Country == "" {
+		http.Error(w, `{"error":"app_ref_amount_recipient_phone_operator_country_required"}`, http.StatusBadRequest)
+		return
+	}
+
+	if existing, err := h.appRepo.FindPaymentByAppRefType(r.Context(), appID, input.AppRef, model.PaymentTypePayout); err == nil {
+		writePayment(w, existing, http.StatusOK)
+		return
+	}
+
+	// Plafond KYC : même règle que les dépôts.
+	app, err := h.appRepo.FindByID(r.Context(), appID)
+	if err != nil {
+		http.Error(w, `{"error":"app_lookup_failed"}`, http.StatusInternalServerError)
+		return
+	}
+	maxAmt := model.MaxAmountFor(app.KYCLevel)
+	if input.AmountCFA > maxAmt {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		json.NewEncoder(w).Encode(map[string]any{
+			"error":        "limit_exceeded",
+			"message":      fmt.Sprintf("Montant maximum autorisé : %d FCFA par transaction.", maxAmt),
+			"max_cfa":      maxAmt,
+			"kyc_required": app.KYCLevel == model.KYCNone,
+		})
+		return
+	}
+
+	fee := fees.Compute(input.AmountCFA, h.usdRate)
+	if fee.NetCFA <= 0 {
+		http.Error(w, `{"error":"amount_too_small_after_fee"}`, http.StatusUnprocessableEntity)
+		return
+	}
+
+	var desc, callbackURL *string
+	if input.Description != "" {
+		desc = &input.Description
+	}
+	if input.CallbackURL != "" {
+		callbackURL = &input.CallbackURL
+	}
+
+	diarraRef := abmcyUUID()
+	payout, err := h.appRepo.CreatePayoutPayment(r.Context(), repository.CreatePayoutParams{
+		AppID:             appID,
+		AppRef:            input.AppRef,
+		DiarraClientRef:   diarraRef,
+		AmountCFA:         input.AmountCFA,
+		FeeCFA:            fee.FeeCFA,
+		NetCFA:            fee.NetCFA,
+		USDRateUsed:       fee.USDRateUsed,
+		Currency:          "XOF",
+		RecipientPhone:    input.RecipientPhone,
+		RecipientOperator: input.RecipientOperator,
+		Country:           input.Country,
+		Description:       desc,
+		CallbackURL:       callbackURL,
+	})
+	if err != nil {
+		http.Error(w, `{"error":"payout_creation_failed"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// On envoie le NET (montant - commission) au destinataire.
+	tx, err := h.diarra.CreatePayout(gateway.CreatePayoutInput{
+		ClientRef:         diarraRef,
+		AmountCFA:         fee.NetCFA,
+		RecipientPhone:    input.RecipientPhone,
+		RecipientOperator: input.RecipientOperator,
+		Country:           input.Country,
+		CallbackURL:       h.selfCallbackURL,
+	})
+	if err != nil {
+		log.Printf("payout: échec via DIARRA pour payout=%s: %v", payout.ID, err)
+		reason := "diarra_payout_failed"
+		_ = h.appRepo.UpdatePaymentStatus(r.Context(), payout.ID, model.PaymentFailed, nil, &reason)
+		http.Error(w, `{"error":"payout_init_failed"}`, http.StatusBadGateway)
+		return
+	}
+	if tx.Status != "" {
+		_ = h.appRepo.UpdatePaymentStatus(r.Context(), payout.ID, normalizeStatus(tx.Status), strPtrOrNil(tx.Provider), nil)
+		payout.Status = normalizeStatus(tx.Status)
+	}
+	writePayment(w, payout, http.StatusCreated)
+}
+
+// PayoutAdminParams — déclenchement d'un payout depuis la console.
+type PayoutAdminParams struct {
+	AppID, RecipientPhone, RecipientOperator, Country, Description string
+	AmountCFA                                                      int
+}
+
+// PayoutForAdmin — logique payout réutilisable pour le back-office.
+func (h *PaymentHandler) PayoutForAdmin(ctx context.Context, p PayoutAdminParams) (*model.Payment, error) {
+	if p.AmountCFA <= 0 || p.RecipientPhone == "" || p.RecipientOperator == "" || p.Country == "" {
+		return nil, errors.New("montant, numéro, opérateur et pays requis")
+	}
+	fee := fees.Compute(p.AmountCFA, h.usdRate)
+	if fee.NetCFA <= 0 {
+		return nil, errors.New("montant trop faible après commission")
+	}
+	appRef := "admin-payout-" + abmcyUUID()[:8]
+	var desc *string
+	if p.Description != "" {
+		desc = &p.Description
+	}
+	diarraRef := abmcyUUID()
+	payout, err := h.appRepo.CreatePayoutPayment(ctx, repository.CreatePayoutParams{
+		AppID: p.AppID, AppRef: appRef, DiarraClientRef: diarraRef,
+		AmountCFA: p.AmountCFA, FeeCFA: fee.FeeCFA, NetCFA: fee.NetCFA, USDRateUsed: fee.USDRateUsed,
+		Currency: "XOF", RecipientPhone: p.RecipientPhone, RecipientOperator: p.RecipientOperator,
+		Country: p.Country, Description: desc,
+	})
+	if err != nil {
+		return nil, err
+	}
+	tx, err := h.diarra.CreatePayout(gateway.CreatePayoutInput{
+		ClientRef: diarraRef, AmountCFA: fee.NetCFA, RecipientPhone: p.RecipientPhone,
+		RecipientOperator: p.RecipientOperator, Country: p.Country, CallbackURL: h.selfCallbackURL,
+	})
+	if err != nil {
+		reason := "diarra_payout_failed"
+		_ = h.appRepo.UpdatePaymentStatus(ctx, payout.ID, model.PaymentFailed, nil, &reason)
+		return h.appRepo.FindPaymentByID(ctx, payout.ID)
+	}
+	if tx.Status != "" {
+		_ = h.appRepo.UpdatePaymentStatus(ctx, payout.ID, normalizeStatus(tx.Status), strPtrOrNil(tx.Provider), nil)
+	}
+	return h.appRepo.FindPaymentByID(ctx, payout.ID)
 }
 
 // PaymentStatus — GET /v1/payments/{app_ref} (authentifié par app) : lit

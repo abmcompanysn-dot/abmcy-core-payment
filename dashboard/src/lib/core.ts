@@ -35,6 +35,9 @@ export type Payment = {
   callback_url?: string | null;
   return_url?: string | null;
   refund_of_payment_id?: string | null;
+  recipient_phone?: string | null;
+  recipient_operator?: string | null;
+  country?: string | null;
   relay_status: string;
   relay_attempts: number;
   relay_last_error?: string | null;

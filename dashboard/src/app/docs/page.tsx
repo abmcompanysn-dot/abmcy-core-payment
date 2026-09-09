@@ -210,7 +210,30 @@ X-Abmcy-Signature: <hmac hex du corps brut, clé = SHA256(votre hmac_secret)>
       </div>
 
       <div className="panel">
-        <h2>6. Rembourser un paiement</h2>
+        <h2>6. Verser vers un numéro mobile money</h2>
+        <p>
+          <code>POST /v1/payouts</code> (mêmes en-têtes signés). Envoie{' '}
+          <code>amount_cfa</code> moins la commission vers un numéro.
+        </p>
+        <pre className="mono block">
+{`{
+  "app_ref":            "payout-042",
+  "amount_cfa":         25000,
+  "recipient_phone":    "770000000",
+  "recipient_operator": "ORANGE_SEN",   // ORANGE_SEN, WAVE_SEN, MTN_MOMO_CIV, MPESA_KEN…
+  "country":            "SEN",
+  "callback_url":       "https://votre-app.com/webhooks/abmcy"   // optionnel
+}`}
+        </pre>
+        <p>
+          Réponse : un <code>payment</code> de <code>type: "payout"</code>. Son statut évolue et
+          déclenche le même callback signé. Idempotent sur <code>app_ref</code>. La gestion du solde
+          est de votre ressort.
+        </p>
+      </div>
+
+      <div className="panel">
+        <h2>7. Rembourser un paiement</h2>
         <p>
           <code>POST /v1/refunds</code> (mêmes en-têtes signés). Rembourse{' '}
           <strong>intégralement</strong> un paiement au statut <code>completed</code>. La commission
