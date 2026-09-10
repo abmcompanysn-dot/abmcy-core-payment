@@ -63,6 +63,7 @@ func (h *PaymentHandler) TestPay(ctx context.Context, in TestPayInput) (map[stri
 		Country:     in.Country,
 		Description: "Paiement de test ABMCY Core",
 		CallbackURL: h.selfCallbackURL,
+		ReturnURL:   h.hostedPayURL(diarraRef) + "?done",
 	})
 	if err != nil {
 		reason := "diarra_init_failed"
