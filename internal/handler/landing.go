@@ -48,7 +48,8 @@ header .wrap{display:flex;align-items:center;justify-content:space-between;heigh
 .hero .cta-row{display:flex;gap:12px;flex-wrap:wrap}
 .trust{margin-top:26px;font-size:13px;color:var(--muted);display:flex;gap:16px;flex-wrap:wrap}
 .trust span{display:flex;align-items:center;gap:6px}
-.trust .ok{width:16px;height:16px;border-radius:50%;background:rgba(0,194,168,.16);color:var(--brand-2);display:grid;place-items:center;font-size:11px;font-weight:800}
+.trust .ok{width:16px;height:16px;border-radius:50%;background:rgba(0,194,168,.16);display:grid;place-items:center;flex:0 0 16px}
+.trust .ok svg{width:10px;height:10px;stroke:var(--brand-2);stroke-width:2.4;fill:none;stroke-linecap:round;stroke-linejoin:round}
 @media(max-width:860px){.hero .wrap{grid-template-columns:1fr;gap:36px}.hero h1{font-size:34px}}
 
 /* animated diagram */
@@ -79,7 +80,11 @@ section .sub{color:var(--muted);margin-bottom:32px;max-width:640px}
 .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
 .card{border:1px solid var(--line);border-radius:16px;padding:22px;transition:transform .15s,box-shadow .15s}
 .card:hover{transform:translateY(-2px);box-shadow:0 16px 40px rgba(11,18,32,.08)}
-.card .ic{width:40px;height:40px;border-radius:11px;background:var(--soft);display:grid;place-items:center;margin-bottom:12px;font-size:18px}
+.card .ic{width:40px;height:40px;border-radius:11px;background:var(--soft);display:grid;place-items:center;margin-bottom:12px}
+.ic svg{width:20px;height:20px;stroke:var(--brand);stroke-width:1.6;fill:none;stroke-linecap:round;stroke-linejoin:round}
+.node .ic svg{width:19px;height:19px;stroke:var(--brand)}
+.node.core .ic svg{stroke:#fff}
+.cc{display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:18px;padding:0 5px;margin-right:8px;border-radius:5px;background:var(--soft);font-size:10px;font-weight:800;letter-spacing:.04em;color:var(--muted);vertical-align:1px}
 .card h3{font-size:16px;margin-bottom:6px}
 .card p{font-size:14px;color:var(--muted)}
 .steps{display:grid;gap:18px;max-width:760px}
@@ -132,13 +137,14 @@ footer{padding:44px 0;color:var(--muted);font-size:13px;text-align:center;border
       le reversement aux marchands et les remboursements. Vous branchez une fois,
       vous encaissez dans 12 pays.</p>
     <div class="cta-row">
-      <a class="btn" href="#inscription">Créer ma passerelle →</a>
+      <a class="btn" href="#inscription">Créer ma passerelle
+        <svg viewBox="0 0 24 24" style="width:16px;height:16px;stroke:#fff;stroke-width:2;fill:none;stroke-linecap:round;stroke-linejoin:round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
       <a class="btn ghost" href="/console/login">Accéder à la console</a>
     </div>
     <div class="trust">
-      <span><span class="ok">✓</span> Aucun frais fixe</span>
-      <span><span class="ok">✓</span> Reversement automatique</span>
-      <span><span class="ok">✓</span> Remboursements inclus</span>
+      <span><span class="ok"><svg viewBox="0 0 24 24"><path d="M4 12l6 6L20 6"/></svg></span> Aucun frais fixe</span>
+      <span><span class="ok"><svg viewBox="0 0 24 24"><path d="M4 12l6 6L20 6"/></svg></span> Reversement automatique</span>
+      <span><span class="ok"><svg viewBox="0 0 24 24"><path d="M4 12l6 6L20 6"/></svg></span> Remboursements inclus</span>
     </div>
   </div>
 
@@ -146,28 +152,34 @@ footer{padding:44px 0;color:var(--muted);font-size:13px;text-align:center;border
     <div class="pulse"></div>
     <div class="lane">
       <div class="node">
-        <div class="ic">🛍️</div><div class="t">Votre application</div><div class="s">boutique, app…</div>
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M3 9h18l-1.5 10.5A2 2 0 0 1 17.5 21h-11a2 2 0 0 1-2-1.5L3 9Z"/><path d="M8 9V6a4 4 0 0 1 8 0v3"/></svg></div>
+        <div class="t">Votre application</div><div class="s">boutique, app…</div>
       </div>
       <div class="wire w1"></div>
       <div class="node core">
-        <div class="ic">🔐</div><div class="t" style="color:#fff">ABMCY Core</div><div class="s" style="color:#e7efff">orchestrateur sécurisé</div>
+        <div class="ic"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><path d="M12 15v2"/></svg></div>
+        <div class="t" style="color:#fff">ABMCY Core</div><div class="s" style="color:#e7efff">orchestrateur sécurisé</div>
       </div>
       <div class="wire w2"></div>
       <div class="node">
-        <div class="ic">📱</div><div class="t">Mobile money</div><div class="s">12 pays</div>
+        <div class="ic"><svg viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/></svg></div>
+        <div class="t">Mobile money</div><div class="s">12 pays</div>
       </div>
     </div>
     <div class="lane" style="margin-top:14px">
       <div class="node" style="opacity:.9">
-        <div class="ic">🧾</div><div class="t">Page de paiement</div><div class="s">hébergée à votre nom</div>
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1Z"/><path d="M14 2v6h6M9 13h6M9 17h6"/></svg></div>
+        <div class="t">Page de paiement</div><div class="s">hébergée à votre nom</div>
       </div>
       <div class="wire w3"></div>
       <div class="node" style="opacity:.9">
-        <div class="ic">💸</div><div class="t">Reversement</div><div class="s">net marchand</div>
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M4 12h13M12 6l6 6-6 6"/><path d="M20 4v16"/></svg></div>
+        <div class="t">Reversement</div><div class="s">net marchand</div>
       </div>
       <div class="wire w1"></div>
       <div class="node" style="opacity:.9">
-        <div class="ic">↩️</div><div class="t">Remboursement</div><div class="s">en un appel</div>
+        <div class="ic"><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/></svg></div>
+        <div class="t">Remboursement</div><div class="s">en un appel</div>
       </div>
     </div>
     <div class="cap">Signature HMAC à chaque étape · webhooks signés · anti-rejeu</div>
@@ -179,11 +191,11 @@ footer{padding:44px 0;color:var(--muted);font-size:13px;text-align:center;border
   <h2>Trois façons d'encaisser</h2>
   <p class="sub">Choisissez selon votre équipe et votre produit. Vous pouvez changer à tout moment.</p>
   <div class="grid3">
-    <div class="card"><div class="ic">🧾</div><h3>Page hébergée</h3><p>Redirigez le client vers une
+    <div class="card"><div class="ic"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M7 14h6"/></svg></div><h3>Page hébergée</h3><p>Redirigez le client vers une
       page prête à l'emploi, à votre nom. Zéro ligne de code de paiement.</p></div>
-    <div class="card"><div class="ic">🧩</div><h3>Widget JavaScript</h3><p>Un bouton « Payer » sur
+    <div class="card"><div class="ic"><svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/><circle cx="12" cy="12" r="3"/></svg></div><h3>Widget JavaScript</h3><p>Un bouton « Payer » sur
       votre site ouvre le paiement en fenêtre. Votre page se met à jour toute seule.</p></div>
-    <div class="card"><div class="ic">⚙️</div><h3>API</h3><p>Créez un paiement depuis votre backend,
+    <div class="card"><div class="ic"><svg viewBox="0 0 24 24"><path d="M8 6 3 12l5 6M16 6l5 6-5 6M13 4l-2 16"/></svg></div><h3>API</h3><p>Créez un paiement depuis votre backend,
       recevez le résultat par webhook signé. Contrôle total.</p></div>
   </div>
   <ol class="steps" style="margin-top:40px">
@@ -198,18 +210,18 @@ footer{padding:44px 0;color:var(--muted);font-size:13px;text-align:center;border
   <h2>12 pays, dépôts et remboursements</h2>
   <p class="sub">Opérationnel partout ci-dessous, sans démarche supplémentaire de votre côté.</p>
   <div class="chips">
-    <span class="chip">🇧🇯 Bénin — Moov, MTN</span>
-    <span class="chip">🇸🇳 Sénégal — Orange, Free, Wave</span>
-    <span class="chip">🇨🇮 Côte d'Ivoire — MTN, Orange</span>
-    <span class="chip">🇨🇲 Cameroun — MTN</span>
-    <span class="chip">🇨🇩 RD Congo — Airtel, Orange, M-Pesa</span>
-    <span class="chip">🇨🇬 Congo-Brazzaville — Airtel, MTN</span>
-    <span class="chip">🇬🇦 Gabon — Airtel</span>
-    <span class="chip">🇰🇪 Kenya — M-Pesa</span>
-    <span class="chip">🇷🇼 Rwanda — Airtel, MTN</span>
-    <span class="chip">🇸🇱 Sierra Leone — Orange</span>
-    <span class="chip">🇺🇬 Ouganda — Airtel, MTN</span>
-    <span class="chip">🇿🇲 Zambie — Airtel, MTN, Zamtel</span>
+    <span class="chip"><span class="cc">BJ</span>Bénin — Moov, MTN</span>
+    <span class="chip"><span class="cc">SN</span>Sénégal — Orange, Free, Wave</span>
+    <span class="chip"><span class="cc">CI</span>Côte d'Ivoire — MTN, Orange</span>
+    <span class="chip"><span class="cc">CM</span>Cameroun — MTN</span>
+    <span class="chip"><span class="cc">CD</span>RD Congo — Airtel, Orange, M-Pesa</span>
+    <span class="chip"><span class="cc">CG</span>Congo-Brazzaville — Airtel, MTN</span>
+    <span class="chip"><span class="cc">GA</span>Gabon — Airtel</span>
+    <span class="chip"><span class="cc">KE</span>Kenya — M-Pesa</span>
+    <span class="chip"><span class="cc">RW</span>Rwanda — Airtel, MTN</span>
+    <span class="chip"><span class="cc">SL</span>Sierra Leone — Orange</span>
+    <span class="chip"><span class="cc">UG</span>Ouganda — Airtel, MTN</span>
+    <span class="chip"><span class="cc">ZM</span>Zambie — Airtel, MTN, Zamtel</span>
   </div>
 </div></section>
 
@@ -229,7 +241,7 @@ footer{padding:44px 0;color:var(--muted);font-size:13px;text-align:center;border
       <p style="font-size:13px;color:var(--muted)">par transaction · après envoi des justificatifs</p>
     </div>
     <div class="card">
-      <b class="k">Volume & intégration directe</b>
+      <b class="k">Volume &amp; intégration directe</b>
       <div class="big">Sur mesure</div>
       <p style="font-size:13px;color:var(--muted)">nous accompagnons votre entreprise à mettre en place sa propre intégration</p>
     </div>
