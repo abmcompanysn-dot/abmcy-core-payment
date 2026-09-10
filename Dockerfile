@@ -6,6 +6,9 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
+# Fiche d'intégration : source unique à la racine (INTEGRATION.md), copiée
+# ici pour le go:embed du package handler (embed ne remonte pas de dossier).
+RUN cp INTEGRATION.md internal/handler/integration.md
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/server ./cmd/server \
     && CGO_ENABLED=0 GOOS=linux go build -o /out/migrate ./cmd/migrate
 

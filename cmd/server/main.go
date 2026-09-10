@@ -125,6 +125,9 @@ func main() {
 	// SDK navigateur (statique, cacheable).
 	r.Get("/widget/abmcy-pay.js", paymentHandler.WidgetJS)
 
+	// Fiche d'intégration en Markdown (rendue dans la console + téléchargeable).
+	r.Get("/docs/integration.md", paymentHandler.IntegrationDoc)
+
 	// Inscription publique depuis la landing page (aucune auth).
 	r.Post("/public/signup", signupHandler.PublicSignup)
 
