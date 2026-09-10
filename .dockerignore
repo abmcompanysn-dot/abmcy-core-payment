@@ -3,4 +3,7 @@ server.log
 server.err.log
 server.pid
 *.md
+!INTEGRATION.md
 k8s
+dashboard/node_modules
+dashboard/.next
