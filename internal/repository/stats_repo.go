@@ -53,11 +53,15 @@ type Dashboard struct {
 // volumes. On considère "abouties" celles au statut 'completed'.
 func (r *AppRepo) Dashboard(ctx context.Context, sinceDays int) (*Dashboard, error) {
 	var since time.Time
-	filter := "TRUE"
+	// filterP : condition sur la table payments seule (alias implicite).
+	// filterPJoin : idem mais qualifiée p. pour les requêtes avec JOIN apps
+	// (apps a aussi une colonne created_at -> ambiguïté sinon).
+	filterP, filterPJoin := "TRUE", "TRUE"
 	args := []any{}
 	if sinceDays > 0 {
 		since = time.Now().AddDate(0, 0, -sinceDays)
-		filter = "created_at >= $1"
+		filterP = "created_at >= $1"
+		filterPJoin = "p.created_at >= $1"
 		args = append(args, since)
 	}
 
@@ -72,7 +76,7 @@ func (r *AppRepo) Dashboard(ctx context.Context, sinceDays int) (*Dashboard, err
 			COALESCE(SUM(COALESCE(net_cfa, amount_cfa - fee_cfa)),0),
 			COUNT(*) FILTER (WHERE status='completed'),
 			COUNT(*) FILTER (WHERE status='failed')
-		FROM payments WHERE `+filter, args...)
+		FROM payments WHERE `+filterP, args...)
 	if err := row.Scan(&d.Totals.Count, &d.Totals.AmountCFA, &d.Totals.FeeCFA, &d.Totals.NetCFA,
 		&d.Totals.Completed, &d.Totals.Failed); err != nil {
 		return nil, err
@@ -84,7 +88,7 @@ func (r *AppRepo) Dashboard(ctx context.Context, sinceDays int) (*Dashboard, err
 	// Par type
 	rows, err := r.pool.Query(ctx, `
 		SELECT type, COUNT(*), COALESCE(SUM(amount_cfa),0), COALESCE(SUM(fee_cfa),0)
-		FROM payments WHERE `+filter+`
+		FROM payments WHERE `+filterP+`
 		GROUP BY type ORDER BY type`, args...)
 	if err != nil {
 		return nil, err
@@ -105,7 +109,7 @@ func (r *AppRepo) Dashboard(ctx context.Context, sinceDays int) (*Dashboard, err
 			COUNT(*) FILTER (WHERE p.status='completed'),
 			COUNT(*) FILTER (WHERE p.status IN ('completed','failed'))
 		FROM payments p JOIN apps a ON a.id = p.app_id
-		WHERE `+filter+`
+		WHERE `+filterPJoin+`
 		GROUP BY p.app_id, a.name
 		ORDER BY SUM(p.fee_cfa) DESC`, args...)
 	if err != nil {
@@ -130,7 +134,7 @@ func (r *AppRepo) Dashboard(ctx context.Context, sinceDays int) (*Dashboard, err
 	rows, err = r.pool.Query(ctx, `
 		SELECT COALESCE(recipient_operator,'—'), COUNT(*), COALESCE(SUM(amount_cfa),0)
 		FROM payments
-		WHERE type='payout' AND recipient_operator IS NOT NULL AND `+filter+`
+		WHERE type='payout' AND recipient_operator IS NOT NULL AND `+filterP+`
 		GROUP BY recipient_operator ORDER BY COUNT(*) DESC`, args...)
 	if err != nil {
 		return nil, err
