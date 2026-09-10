@@ -151,15 +151,37 @@ type CreatePaymentParams struct {
 	ReturnURL       *string
 }
 
+// CreatePayment insère un dépôt. IDEMPOTENT ET ANTI-RACE : si un dépôt
+// existe déjà pour (app_id, app_ref, type='deposit') — y compris créé par
+// une requête concurrente une microseconde plus tôt — on renvoie CELUI-LÀ
+// inchangé au lieu d'échouer sur la contrainte d'unicité. Le lien de
+// paiement reste donc le même pour un app_ref donné, tant que le paiement
+// n'est pas terminé.
 func (r *AppRepo) CreatePayment(ctx context.Context, p CreatePaymentParams) (*model.Payment, error) {
 	row := r.pool.QueryRow(ctx,
 		`INSERT INTO payments (app_id, app_ref, diarra_client_ref, amount_cfa, fee_cfa, net_cfa, usd_rate_used,
 		                       currency, description, callback_url, return_url)
 		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		 ON CONFLICT (app_id, app_ref, type) DO NOTHING
 		 RETURNING `+paymentColumns,
 		p.AppID, p.AppRef, p.DiarraClientRef, p.AmountCFA, p.FeeCFA, p.NetCFA, p.USDRateUsed,
 		p.Currency, p.Description, p.CallbackURL, p.ReturnURL)
-	return scanPayment(row)
+	pay, err := scanPayment(row)
+	if err == ErrPaymentNotFound {
+		// Le ON CONFLICT DO NOTHING n'a rien renvoyé => la ligne existe déjà.
+		return r.FindPaymentByAppRefType(ctx, p.AppID, p.AppRef, model.PaymentTypeDeposit)
+	}
+	return pay, err
+}
+
+// UpdateDiarraRefAndRedirect remplace le diarra_client_ref et le
+// redirect_url d'un paiement — utilisé quand on régénère le lien PawaPay
+// (expiré) SANS créer de nouvelle transaction.
+func (r *AppRepo) UpdateDiarraRefAndRedirect(ctx context.Context, id, diarraRef, redirectURL string) error {
+	_, err := r.pool.Exec(ctx,
+		`UPDATE payments SET diarra_client_ref = $2, redirect_url = $3, updated_at = now() WHERE id = $1`,
+		id, diarraRef, redirectURL)
+	return err
 }
 
 // FindPaymentByDiarraRefPublic — lecture SANS auth pour la page de paiement

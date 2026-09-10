@@ -106,10 +106,17 @@ func (h *PaymentHandler) Pay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Idempotence : un app_ref déjà utilisé par CETTE app renvoie le paiement
-	// existant plutôt que d'en créer un second (même principe que
-	// GatewayHandler.CreateDeposit côté DIARRA).
+	// Idempotence STRICTE par app_ref : un app_ref déjà utilisé par CETTE app
+	// renvoie TOUJOURS le même paiement — jamais un doublon, jamais un lien
+	// différent. Si le paiement est encore en cours mais que son lien PawaPay
+	// a expiré, on régénère UNIQUEMENT le lien (même transaction ABMCY Core).
 	if existing, err := h.appRepo.FindPaymentByAppRef(r.Context(), appID, input.AppRef); err == nil {
+		if (existing.Status == model.PaymentPending || existing.Status == model.PaymentProcessing) &&
+			h.linkLikelyExpired(existing) {
+			if refreshed, rerr := h.refreshDepositLink(r.Context(), existing, input.Country); rerr == nil {
+				existing = refreshed
+			}
+		}
 		writePaymentWithHosted(w, existing, h.hostedPayURL(existing.DiarraClientRef), http.StatusOK)
 		return
 	}
@@ -193,6 +200,51 @@ func (h *PaymentHandler) Pay(w http.ResponseWriter, r *http.Request) {
 
 	payment.RedirectURL = &tx.RedirectURL
 	writePaymentWithHosted(w, payment, h.hostedPayURL(payment.DiarraClientRef), http.StatusCreated)
+}
+
+// linkLikelyExpired : la page de paiement hébergée PawaPay expire après
+// ~24 h. Au-delà, régénérer le lien plutôt que de renvoyer un lien mort.
+func (h *PaymentHandler) linkLikelyExpired(p *model.Payment) bool {
+	if p.RedirectURL == nil || *p.RedirectURL == "" {
+		return true
+	}
+	return time.Since(p.CreatedAt) > 23*time.Hour
+}
+
+// refreshDepositLink recrée un dépôt côté DIARRA (nouveau diarra_client_ref +
+// nouveau lien PawaPay) pour un paiement ABMCY Core EXISTANT dont le lien a
+// expiré — sans créer de nouvelle ligne `payments`, sans retoucher au
+// montant ni à la commission.
+func (h *PaymentHandler) refreshDepositLink(ctx context.Context, p *model.Payment, country string) (*model.Payment, error) {
+	if country == "" {
+		if p.Country != nil {
+			country = *p.Country
+		} else {
+			country = "SEN"
+		}
+	}
+	newRef := abmcyUUID()
+	desc := ""
+	if p.Description != nil {
+		desc = *p.Description
+	}
+	tx, err := h.diarra.CreateDeposit(gateway.CreateDepositInput{
+		ClientRef:   newRef,
+		AmountCFA:   p.AmountCFA,
+		Country:     country,
+		Description: desc,
+		CallbackURL: h.selfCallbackURL,
+		ReturnURL:   h.hostedPayURL(newRef) + "?done",
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := h.appRepo.UpdateDiarraRefAndRedirect(ctx, p.ID, newRef, tx.RedirectURL); err != nil {
+		return nil, err
+	}
+	p.DiarraClientRef = newRef
+	p.RedirectURL = &tx.RedirectURL
+	return p, nil
 }
 
 // hostedPayURL construit l'URL de la page de paiement hébergée d'ABMCY Core
