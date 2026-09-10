@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"log"
 	"net/http"
@@ -126,6 +127,28 @@ func main() {
 	// Inscription publique depuis la landing page (aucune auth).
 	r.Post("/public/signup", signupHandler.PublicSignup)
 
+	// Page de test de paiement — protégée par ?token=<ABMCY_ADMIN_TOKEN>
+	// (un GET navigateur ne peut pas porter d'en-tête Bearer). À usage interne.
+	if adminTok := os.Getenv("ABMCY_ADMIN_TOKEN"); adminTok != "" {
+		r.Route("/test", func(r chi.Router) {
+			r.Use(func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+					tok := req.URL.Query().Get("token")
+					if tok == "" {
+						tok = req.Header.Get("X-Test-Token")
+					}
+					if subtleCompare(tok, adminTok) {
+						next.ServeHTTP(w, req)
+						return
+					}
+					http.Error(w, "token invalide (ajouter ?token=... à l'URL)", http.StatusUnauthorized)
+				})
+			})
+			r.Get("/", paymentHandler.TestPageHTTP)
+			r.Post("/pay", paymentHandler.TestPayHTTP)
+		})
+	}
+
 	// Administration d'ABMCY Core : création/désactivation des apps clientes.
 	// Jeton unique porté par ABMCY_ADMIN_TOKEN (voir middleware.RequireAdmin).
 	adminToken := os.Getenv("ABMCY_ADMIN_TOKEN")
@@ -154,4 +177,8 @@ func main() {
 	if err := http.ListenAndServe(":"+port, r); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func subtleCompare(a, b string) bool {
+	return a != "" && subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
