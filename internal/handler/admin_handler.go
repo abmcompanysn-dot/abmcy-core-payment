@@ -8,6 +8,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -43,6 +44,7 @@ func (h *AdminHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	}
 	d, err := h.appRepo.Dashboard(r.Context(), since)
 	if err != nil {
+		log.Printf("stats: %v", err)
 		http.Error(w, `{"error":"stats_failed"}`, http.StatusInternalServerError)
 		return
 	}
