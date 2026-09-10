@@ -120,6 +120,7 @@ func main() {
 	// Page de paiement hébergée, ouverte par le navigateur de l'utilisateur
 	// final (aucune auth). L'app ouvre hosted_pay_url (renvoyée par /v1/pay).
 	r.Get("/pay/{ref}", paymentHandler.HostedPay)
+	r.Get("/pay/{ref}/status", paymentHandler.HostedPayStatus)
 
 	// SDK navigateur (statique, cacheable).
 	r.Get("/widget/abmcy-pay.js", paymentHandler.WidgetJS)

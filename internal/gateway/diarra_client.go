@@ -52,6 +52,10 @@ type CreateDepositInput struct {
 	Country     string `json:"country"`
 	Description string `json:"description,omitempty"`
 	CallbackURL string `json:"callback_url,omitempty"`
+	// ReturnURL : où DIARRA renvoie le navigateur après la page de paiement.
+	// ABMCY Core y met sa propre page de suivi /pay/{ref} (qui redirige
+	// ensuite vers la return_url du marchand).
+	ReturnURL string `json:"return_url,omitempty"`
 }
 
 type Transaction struct {

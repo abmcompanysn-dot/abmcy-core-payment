@@ -176,7 +176,8 @@ func (h *PaymentHandler) Pay(w http.ResponseWriter, r *http.Request) {
 		AmountCFA:   input.AmountCFA,
 		Country:     input.Country,
 		Description: input.Description,
-		CallbackURL: h.selfCallbackURL, // DIARRA -> /webhooks/diarra de CE service (jamais l'URL de l'app)
+		CallbackURL: h.selfCallbackURL,                   // DIARRA -> /webhooks/diarra de CE service (jamais l'URL de l'app)
+		ReturnURL:   h.hostedPayURL(diarraRef) + "?done", // navigateur -> notre page de suivi, qui redirige vers la return_url du marchand
 	})
 	if err != nil {
 		log.Printf("pay: échec création dépôt via DIARRA pour payment=%s: %v", payment.ID, err)
@@ -708,23 +709,60 @@ a.btn.secondary{background:#fff;color:#374151;border:1px solid #d1d5db}
     {{if .ReturnURL}}<a class="btn secondary" href="{{.ReturnURL}}">Annuler et revenir</a>{{end}}
   {{else}}
     <div class="amount">{{.AmountFmt}} FCFA</div>
-    <p>Statut du paiement : <span class="st st-{{.Status}}">{{.StatusLabel}}</span></p>
+    <p id="stxt">Statut du paiement : <span class="st st-{{.Status}}" id="sbadge">{{.StatusLabel}}</span></p>
     {{if .FailureReason}}<p class="desc">{{.FailureReason}}</p>{{end}}
-    {{if .ReturnURL}}<a class="btn" href="{{.ReturnURL}}">Revenir à la boutique</a>{{end}}
+    {{if .ReturnURL}}<a class="btn" href="{{.ReturnURL}}" id="backbtn">Revenir à la boutique</a>{{end}}
   {{end}}
   <div class="foot">core.diarra.app</div>
 </div>
 <script>
-// Si cette page a été ouverte par le widget (window.opener), on prévient
-// l'app du résultat puis on ferme. Sur un statut final, on ferme aussi
-// automatiquement au bout de 2s si personne ne l'a fermée.
 (function () {
   var status = {{.Status}};
+  var ref = {{.AppRef}};
+  var isDone = {{.IsDone}};          // vrai si on revient de la page de paiement (?done)
+  var returnURL = {{.ReturnURL}};
+
+  // Widget : prévenir l'ouvreur puis fermer sur statut final.
   if (window.opener && !window.opener.closed) {
-    try { window.opener.postMessage({ abmcy_pay: true, status: status, ref: {{.AppRef}} }, '*'); } catch (e) {}
+    try { window.opener.postMessage({ abmcy_pay: true, status: status, ref: ref }, '*'); } catch (e) {}
   }
   if (status === 'completed' || status === 'failed' || status === 'cancelled') {
-    setTimeout(function () { if (window.opener && !window.opener.closed) window.close(); }, 2000);
+    if (window.opener && !window.opener.closed) {
+      setTimeout(function () { window.close(); }, 2000);
+    } else if (status === 'completed' && returnURL) {
+      // pas dans un widget : rediriger vers le marchand
+      var u = returnURL + (returnURL.indexOf('?') < 0 ? '?' : '&') + 'status=completed&ref=' + encodeURIComponent(ref);
+      setTimeout(function () { window.location.href = u; }, 1500);
+    }
+    return;
+  }
+
+  // Retour de la page de paiement, statut pas encore final : on sonde
+  // /pay/{ref}/status jusqu'à ce que le webhook arrive.
+  if (isDone) {
+    var badge = document.getElementById('sbadge');
+    var stxt = document.getElementById('stxt');
+    if (stxt) stxt.innerHTML = 'Confirmation du paiement en cours…';
+    var path = window.location.pathname.replace(/\/$/, '') + '/status';
+    var tries = 0;
+    var iv = setInterval(function () {
+      tries++;
+      fetch(path).then(function (r) { return r.json(); }).then(function (d) {
+        if (!d || !d.status) return;
+        if (d.status === 'completed') {
+          clearInterval(iv);
+          if (returnURL) {
+            window.location.href = returnURL + (returnURL.indexOf('?') < 0 ? '?' : '&') + 'status=completed&ref=' + encodeURIComponent(ref);
+          } else {
+            window.location.reload();
+          }
+        } else if (d.status === 'failed' || d.status === 'cancelled') {
+          clearInterval(iv);
+          window.location.reload();
+        }
+      }).catch(function () {});
+      if (tries > 40) clearInterval(iv); // ~2 min
+    }, 3000);
   }
 })();
 </script>
@@ -741,6 +779,7 @@ type hostedPayView struct {
 	RedirectURL   string
 	ReturnURL     string
 	IsPayable     bool
+	IsDone        bool // l'utilisateur revient de la page de paiement (?done) — sonder le statut
 }
 
 // HostedPay — GET /pay/{ref} : page de paiement hébergée, ouverte par le
@@ -765,13 +804,15 @@ func (h *PaymentHandler) HostedPay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	_, isDone := r.URL.Query()["done"]
 	view := hostedPayView{
 		AppName:     pw.AppName,
 		AppRef:      p.AppRef,
 		AmountFmt:   groupThousands(p.AmountCFA),
 		Status:      p.Status,
 		StatusLabel: statusLabelFR(p.Status),
-		IsPayable:   (p.Status == model.PaymentPending || p.Status == model.PaymentProcessing) && p.RedirectURL != nil && *p.RedirectURL != "",
+		IsPayable:   !isDone && (p.Status == model.PaymentPending || p.Status == model.PaymentProcessing) && p.RedirectURL != nil && *p.RedirectURL != "",
+		IsDone:      isDone,
 	}
 	if p.Description != nil {
 		view.Description = *p.Description
@@ -790,6 +831,22 @@ func (h *PaymentHandler) HostedPay(w http.ResponseWriter, r *http.Request) {
 	if err := hostedPayTmpl.Execute(w, view); err != nil {
 		log.Printf("hosted pay: rendu template: %v", err)
 	}
+}
+
+// HostedPayStatus — GET /pay/{ref}/status : statut JSON pour la page hébergée
+// (polling après retour de la page de paiement). Aucune auth.
+func (h *PaymentHandler) HostedPayStatus(w http.ResponseWriter, r *http.Request) {
+	pw, err := h.appRepo.FindPaymentByDiarraRefPublic(r.Context(), chi.URLParam(r, "ref"))
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error":"not_found"}`))
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]any{
+		"status":  pw.Payment.Status,
+		"app_ref": pw.Payment.AppRef,
+	})
 }
 
 func statusLabelFR(s string) string {
