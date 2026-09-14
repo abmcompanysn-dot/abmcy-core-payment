@@ -96,6 +96,21 @@ func main() {
 	r.Use(chimw.Logger)
 	r.Use(chimw.Recoverer)
 
+	// core.diarra.app n'est pas un site à indexer (API + admin + landing
+	// technique) — X-Robots-Tag en défense en profondeur (couvre aussi les
+	// réponses JSON, que robots.txt ne couvre pas vraiment) + robots.txt
+	// explicite pour les crawlers qui le respectent encore.
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Robots-Tag", "noindex, nofollow")
+			next.ServeHTTP(w, r)
+		})
+	})
+	r.Get("/robots.txt", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Write([]byte("User-agent: *\nDisallow: /\n"))
+	})
+
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"status":"ok"}`))
 	})
